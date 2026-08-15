@@ -1,19 +1,31 @@
 # TCC — Bafômetro Embarcado com Zephyr RTOS
 
-Este repositório reúne a documentação e, posteriormente, o código-fonte do programa embarcado desenvolvido para o Trabalho de Conclusão de Curso.
+Este repositório reúne a documentação para o Trabalho de Conclusão de Curso que consiste no desenvolvimento de um sistema embarcado para um bafômetro utilizando o Zephyr RTOS, com foco em portabilidade, organização do software e reutilização entre diferentes plataformas de microcontroladores.
 
-O projeto consiste no desenvolvimento de um bafômetro embarcado portável entre duas plataformas de microcontroladores:
+## Objetivo
 
-- ESP32-C3-MINI-1, baseado na arquitetura RISC-V;
-- STM32WB55CGU6, baseado na arquitetura Arm Cortex-M4.
+Desenvolver uma aplicação embarcada capaz de realizar o processo de medição de álcool utilizando o sensor **MQ303B**, executando a mesma lógica de aplicação em plataformas baseadas em arquiteturas distintas.
 
-O programa será desenvolvido com o Zephyr RTOS, priorizando portabilidade, reutilização, capacidade de teste, rastreabilidade e separação entre a lógica da aplicação e os detalhes específicos do equipamento.
+As plataformas previstas são:
 
-## Estado atual
+* **ESP32-C3-MINI-1** — arquitetura RISC-V;
+* **STM32WB55CGU6** — arquitetura Arm Cortex-M4.
 
-O projeto encontra-se na fase de preparação do ambiente, documentação inicial e definição da arquitetura.
+A utilização do Zephyr RTOS busca reduzir o acoplamento do software aos recursos específicos de cada microcontrolador e facilitar a manutenção, os testes e a portabilidade da aplicação.
 
-O desenvolvimento do programa embarcado ainda não foi iniciado.
+## Principais componentes
+
+O sistema prevê a integração dos seguintes elementos:
+
+* Sensor de álcool MQ303B
+* Detector digital de sopro
+* Circuito de controle do aquecimento do sensor
+* Condicionamento e aquisição do sinal analógico
+* Display OLED
+* Comunicação Bluetooth LE
+* Saída digital para atuação do periférico de inibição.
+
+Modelos, interfaces, conexões, pinagem e demais definições físicas são documentados em [definições de hardware](docs/hardware.md).
 
 ## Ambiente de referência
 
@@ -40,22 +52,16 @@ A configuração completa será registrada no arquivo `documentacao/ambiente.md`
 - arquitetura: Arm Cortex-M4;
 - alvo Zephyr: `weact_stm32wb55_core/stm32wb55xx`.
 
-## Estrutura inicial
+## Organização do projeto
 
-- `documentacao/ambiente.md`;
-- `documentacao/visao-geral.md`;
-- `documentacao/decisoes/`;
-- `.editorconfig`;
-- `.gitattributes`;
-- `.gitignore`;
-- `HISTORICO.md`;
-- `CONTRIBUICAO.md`;
-- `README.md`.
+A documentação é dividida por responsabilidade, evitando a duplicação de informações.
 
-## Referência anterior
-
-Existe um projeto anterior utilizado somente para testes e consultas pontuais. Ele não pertence a este repositório e não representa a versão inicial do programa atual.
-
-## Licenciamento
-
-A licença do projeto ainda será definida. O repositório deverá permanecer privado até que sejam avaliadas as regras institucionais e a titularidade do material produzido.
+| Documento                                                                     | Finalidade                                                                        |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Requisitos](docs/requisitos.md)                                              | Requisitos funcionais, não funcionais, restrições e critérios de aceitação        |
+| [Definições de hardware](docs/hardware.md)                                    | Componentes, interfaces, conexões, pinagem e restrições físicas                   |
+| [Arquitetura do software embarcado](docs/arquitetura/arquitetura-firmware.md) | Organização do software, componentes, responsabilidades e interação entre módulos |
+| [Decisões de arquitetura](docs/arquitetura/decisoes/)                         | Registro das decisões arquiteturais relevantes e suas justificativas              |
+| [Ambiente de desenvolvimento](docs/desenvolvimento/ambiente.md)               | Preparação, ferramentas, versões e validação do ambiente                          |
+| [Plano de implementação](docs/desenvolvimento/plano-implementacao.md)         | Etapas previstas para desenvolvimento e validação                                 |
+| [Visão geral](docs/visao-geral.md)                                            | Contexto condensado e estado atual do projeto                                     |
