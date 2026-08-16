@@ -8,7 +8,7 @@ Desenvolver uma aplicação embarcada capaz de realizar o processo de medição 
 
 As plataformas previstas são:
 
-* **ESP32-C3-MINI-1** — arquitetura RISC-V;
+* **ESP32-C3-MINI-1** — arquitetura RISC-V.
 * **STM32WB55CGU6** — arquitetura Arm Cortex-M4.
 
 A utilização do Zephyr RTOS busca reduzir o acoplamento do software aos recursos específicos de cada microcontrolador e facilitar a manutenção, os testes e a portabilidade da aplicação.
@@ -17,40 +17,40 @@ A utilização do Zephyr RTOS busca reduzir o acoplamento do software aos recurs
 
 O sistema prevê a integração dos seguintes elementos:
 
-* Sensor de álcool MQ303B
-* Detector digital de sopro
-* Circuito de controle do aquecimento do sensor
-* Condicionamento e aquisição do sinal analógico
-* Display OLED
-* Comunicação Bluetooth LE
+* Sensor de álcool MQ303B.
+* Detector digital de sopro.
+* Circuito de controle do aquecimento do sensor.
+* Condicionamento e aquisição do sinal analógico.
+* Display OLED.
+* Comunicação Bluetooth LE.
 * Saída digital para atuação do periférico de inibição.
 
 Modelos, interfaces, conexões, pinagem e demais definições físicas são documentados em [definições de hardware](docs/hardware.md).
 
 ## Ambiente de referência
 
-- Zephyr RTOS 4.4.0;
-- Zephyr SDK 1.0.1;
-- Python 3.12.10;
-- West 1.5.0;
-- CMake 4.4.0;
-- Windows de 64 bits.
+- Zephyr RTOS 4.4.0
+- Zephyr SDK 1.0.1
+- Python 3.12.10
+- West 1.5.0
+- CMake 4.4.0
+- Windows de 64 bits
 
-A configuração completa será registrada no arquivo `documentacao/ambiente.md`.
+A configuração completa será registrada no arquivo `docs/desenvolvimento/ambiente.md`.
 
 ## Plataformas previstas
 
 ### ESP32-C3
 
-- placa de referência: ESP32-C3 DevKitM;
-- arquitetura: RISC-V;
-- alvo Zephyr: `esp32c3_devkitm/esp32c3`.
+- Placa de referência: ESP32-C3 DevKitM
+- Arquitetura: RISC-V
+- Alvo Zephyr: `esp32c3_devkitm/esp32c3`
 
 ### STM32WB55
 
-- placa de referência: WeAct STM32WB55 Core;
-- arquitetura: Arm Cortex-M4;
-- alvo Zephyr: `weact_stm32wb55_core/stm32wb55xx`.
+- Placa de referência: WeAct STM32WB55 Core
+- Arquitetura: Arm Cortex-M4
+- Alvo Zephyr: `weact_stm32wb55_core/stm32wb55xx`
 
 ## Organização do projeto
 
