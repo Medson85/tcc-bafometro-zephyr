@@ -23,6 +23,8 @@ Etapas de desenvolvimento e validação, na ordem do escopo consolidado v2. A ar
 | 8 | Porte para o STM32WB55: overlay da WeAct, binário HCI no M0+ e checklist | 1 a 7; sonda SWD; métricas definidas | Mesmo código de aplicação nos dois alvos, com o checklist completo |
 | 9 | Campanha metrológica | 3 a 8 | Protocolos executados e resultados registrados |
 
+Situação: etapa 1 concluída. O esqueleto está em `app/` e os testes da máquina em `tests/maquina`. Ele roda nos dois caminhos do pré-requisito de simulação: no `native_sim`, com o roteiro de simulação, e na DevKitM-1, ligando o GPIO10 ao 3V3 para simular o sopro.
+
 ## Métricas de portabilidade
 
 A pergunta central do trabalho é o esforço de migração entre as plataformas. Para que o porte gere dado comparável, as métricas precisam estar definidas antes da etapa 8. Candidatas:

@@ -30,38 +30,45 @@ Os overlays ficam em `app/boards/` com o nome da placa (`esp32c3_devkitm.overlay
 
 Nomes sensíveis à versão: no Zephyr 4.4, `solomon,ssd1327fb` passou a `solomon,ssd1327` e `CONFIG_SSD1327` passou a `CONFIG_SSD1327_5`. Instruções copiadas de outras versões devem ser conferidas contra a 4.4.0.
 
-## Organização dos arquivos (proposta)
+## Organização dos arquivos
 
 ```text
 app/
   CMakeLists.txt
+  Kconfig                     opções do bafômetro (tempos reduzidos, roteiro)
+  fontes.cmake                fontes compartilhadas com os testes
   prj.conf
-  boards/
+  boards/                     overlay e configuração por placa
     esp32c3_devkitm.overlay
     weact_stm32wb55_core.overlay
-    native_sim.overlay
+    native_sim.overlay, native_sim.conf
   src/
     main.c
     config_produto.h          fonte única dos parâmetros
     aplicacao/
       bafometro.c, .h         máquina de estados, fila e temporizador
     dominio/                  sem dependência do Zephyr
-      filtro.h                contrato do filtro
-      filtro_media_movel.c
-      estatistica.c
-      conversao.c             tabela Rs/R0 -> concentração
-      qualidade.c
-      decisao.c               decisão de inibição com histerese
+      resultado.h
+      filtro.h                contrato do filtro (etapa 2)
+      filtro_media_movel.c    (etapa 2)
+      estatistica.c           (etapa 2)
+      conversao.c             tabela Rs/R0 -> concentração (etapa 2)
+      qualidade.c             (etapa 2)
+      decisao.c               decisão de inibição com histerese (etapa 2)
     dispositivos/
       sensor_alcool.c         fases Q5/Q7, ADC e persistência do R0
       detector_sopro.c
       inibidor.c
       tela.c
       ble.c
+    simulacao/
+      roteiro.c               só no native_sim: percorre o fluxo completo
 tests/
-  dominio/
-  maquina/
+  maquina/                    máquina de estados (etapa 1)
+  dominio/                    (etapa 2)
 ```
+
+Na etapa 1, os módulos de dispositivo só registram em LOG, exceto o detector de sopro, que já usa o GPIO do devicetree. As interfaces deles já são as definitivas; as etapas seguintes preenchem a implementação sem mudar a máquina de estados.
 
 Os pinos ficam no nó `zephyr,user` do devicetree (ver [definições de hardware](../hardware.md)). Um binding próprio só entra se a interface virar componente reutilizável.
 
@@ -77,8 +84,8 @@ Regras do SMF, conferidas no `include/zephyr/smf.h` da 4.4.0:
 | Estado | Na entrada | Eventos e transições |
 |---|---|---|
 | INICIALIZANDO | Inibidor **ativo**; valida dispositivos; carrega R0 persistido (ou padrão + flag `naoCalibrado`) | ok → PRE_AQUECENDO · falha → ERRO |
-| PRE_AQUECENDO | Fase de aquecimento (Q7=0, Q5=1); temporizador de 10 s; contagem na tela (tique de 1 s) | tempo → AGUARDANDO_SOPRO, ou CALIBRANDO_R0 se veio de comando |
-| AGUARDANDO_SOPRO | Fase de operação (Q7=1, Q5=0) após acomodação; arma a interrupção do detector; temporizador de 20 s; tela "Sopre"; estado no BLE | sopro → COLETANDO · tempo → ECONOMIA · calibrar → CALIBRANDO_R0 · cancelar → ECONOMIA |
+| PRE_AQUECENDO | Fase de aquecimento (Q7=0, Q5=1); contagem de 10 s na tela (tique de 1 s); ao fim, fase de operação (Q7=1, Q5=0) e espera da acomodação | fim da acomodação → AGUARDANDO_SOPRO, ou CALIBRANDO_R0 se houver calibração pendente · calibrar → agenda a calibração |
+| AGUARDANDO_SOPRO | Arma a interrupção do detector; temporizador de 20 s; tela "Sopre"; estado no BLE | sopro → COLETANDO · tempo → ECONOMIA · calibrar → CALIBRANDO_R0 · cancelar → ECONOMIA |
 | COLETANDO | Desarma a interrupção; zera coleta e filtro; temporizador periódico de 50 ms | Em cada tique: lê o ADC (mV), alimenta a média móvel e lê o detector. Queda acumulada acima da tolerância antes de 5 s → mensagem de repetição e AGUARDANDO_SOPRO · 5 s completos → PROCESSANDO · falha de ADC → ERRO |
 | PROCESSANDO | Para o temporizador; estatística do trecho estável (após o transiente de 2 s); Rs, Rs/R0, concentração, qualidade e decisão de inibição | válido → APRESENTANDO_RESULTADO · qualidade insuficiente → mensagem e AGUARDANDO_SOPRO · erro → ERRO |
 | APRESENTANDO_RESULTADO | Tela com mg/L e qualidade; notificação BLE; **atua o inibidor** conforme a decisão; temporizador de apresentação | tempo ou repetir → FINALIZANDO |
@@ -115,6 +122,8 @@ struct EventoBafometro {
 | Callback de GPIO | 1 | Detector → `EVENTO_SOPRO`, armado só em AGUARDANDO_SOPRO e ECONOMIA |
 | `k_mutex` | 1 | Protege o último pacote BLE, porque as características serão de leitura e notificação |
 | Semáforos, filas de trabalho e threads extras | 0 | A fila cobre a sincronização; BLE e LOG usam as threads do sistema |
+
+No `native_sim`, o roteiro de simulação roda numa thread própria, que não existe no firmware.
 
 Watchdog de hardware: opcional, coerente com o *fail-active*.
 
@@ -233,5 +242,5 @@ A curva Rs/R0 → concentração fica como tabela em `conversao.c`, sem constant
 ## Testes
 
 1. Domínio puro com ztest no `native_sim`: filtro (janela parcial e cheia), estatística, Rs (incluindo guardas), interpolação e extremos da tabela, qualidade e decisão de inibição com histerese.
-2. Máquina de estados com eventos injetados e tempos reduzidos: sequência normal, fim da espera levando à economia, sopro interrompido aos 3 s, evento de geração antiga, fila cheia, cancelamento, falha de ADC e comando de calibração.
+2. Máquina de estados (`tests/maquina`, 14 casos) com eventos injetados no tempo simulado do `native_sim`: sequência normal, duração do pré-aquecimento e da coleta, sopro interrompido aos 3 s, microqueda tolerada, fim da espera levando à economia, despertar, reinício da espera por comando, evento de geração antiga, fila cheia durante a coleta, cancelamento, falha levando ao erro, calibração na espera e a partir da economia, e sopro anterior ao aviso.
 3. Checklist de hardware por alvo: polaridades, fases Q5/Q7, ADC contra referência, display, BLE (pacote e comando), estado do inibidor no boot, em erro e em economia, e reinicialização.

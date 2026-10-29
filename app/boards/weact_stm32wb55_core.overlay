@@ -1,0 +1,12 @@
+/*
+ * Provisório (etapa 1): o botão BOOT da placa (PH3) faz o papel do detector
+ * de sopro. A pinagem do bafômetro no STM32WB55 é definida na etapa 8.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		detector-sopro-gpios = <&gpioh 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+	};
+};

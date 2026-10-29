@@ -1,0 +1,21 @@
+menu "Bafômetro"
+
+config BAFOMETRO_TEMPOS_REDUZIDOS
+	bool "Tempos de espera reduzidos"
+	help
+	  Divide por 10 os tempos de pré-aquecimento, espera pelo sopro,
+	  apresentação, recuperação e acomodação, para demonstrações em
+	  hardware. A coleta de 5 s e os períodos de amostragem não mudam.
+
+config BAFOMETRO_ROTEIRO_SIMULACAO
+	bool "Roteiro de simulação"
+	default y if BOARD_NATIVE_SIM
+	depends on GPIO_EMUL
+	help
+	  Percorre o fluxo completo no native_sim, acionando o detector pelo
+	  GPIO emulado e enviando comandos pela fila de eventos, e encerra a
+	  simulação ao final.
+
+endmenu
+
+source "Kconfig.zephyr"
