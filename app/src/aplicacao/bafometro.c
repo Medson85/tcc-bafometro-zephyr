@@ -21,6 +21,7 @@
 #include "dispositivos/inibidor.h"
 #include "dispositivos/sensor_alcool.h"
 #include "dispositivos/tela.h"
+#include "dominio/decisao.h"
 #include "dominio/resultado.h"
 
 LOG_MODULE_REGISTER(bafometro);
@@ -382,7 +383,7 @@ static enum smf_state_result executarColetando(void *obj)
 		}
 	}
 
-	/* A leitura do sensor e o filtro entram nas etapas 2 e 3. */
+	/* A leitura do ADC e o registro das amostras entram na etapa 3. */
 	ctx->tiquesColetados++;
 	if (ctx->tiquesColetados >= QTD_TIQUES_COLETA) {
 		transitarPara(ESTADO_PROCESSANDO);
@@ -400,15 +401,21 @@ static void entrarProcessando(void *obj)
 	ctx->sequenciaMedicao++;
 
 	/*
-	 * O cálculo entra na etapa 2. Até lá o resultado é inválido, e o inibidor
-	 * nunca é liberado. Na etapa 2, resultado inválido ou de qualidade
-	 * insuficiente volta para AGUARDANDO_SOPRO.
+	 * O cálculo está em dominio/medicao.c, mas as amostras só chegam com a
+	 * leitura do ADC, na etapa 3. Até lá o resultado é inválido e a decisão
+	 * mantém o estado do inibidor, que nunca chega a ser liberado. Na etapa 3,
+	 * resultado inválido ou de qualidade insuficiente volta para AGUARDANDO_SOPRO.
 	 */
 	ctx->resultado = (struct ResultadoMedicao){
 		.valido = false,
-		.calibrado = ctx->r0Calibrado,
-		.sequencia = ctx->sequenciaMedicao,
+		.qualidade = QUALIDADE_DESCARTAR,
 	};
+	ctx->resultado.calibrado = ctx->r0Calibrado;
+	ctx->resultado.sequencia = ctx->sequenciaMedicao;
+	ctx->resultado.inibir = decisao_deveInibir(
+		inibidor_estaAtivo(),
+		ctx->resultado.valido && (ctx->resultado.qualidade != QUALIDADE_DESCARTAR),
+		ctx->resultado.concentracaoMilesimosMgL);
 
 	transitarPara(ESTADO_APRESENTANDO_RESULTADO);
 }
@@ -421,11 +428,11 @@ static void entrarApresentandoResultado(void *obj)
 	tela_mostrarResultado(&ctx->resultado);
 	ble_notificarResultado(&ctx->resultado);
 
-	/* A decisão com limite e histerese entra na etapa 2. */
-	if (ctx->resultado.valido && !ctx->resultado.inibir) {
-		inibidor_liberar();
-	} else {
+	/* Atua conforme a decisão tomada em PROCESSANDO; a saída é mantida. */
+	if (ctx->resultado.inibir) {
 		inibidor_ativar();
+	} else {
+		inibidor_liberar();
 	}
 
 	armarTemporizador(FINALIDADE_APRESENTACAO, TEMPO_APRESENTACAO_MS, 0U);
@@ -539,7 +546,7 @@ static enum smf_state_result executarCalibrandoR0(void *obj)
 		return SMF_EVENT_HANDLED;
 	}
 
-	/* O cálculo e a gravação do R0 entram na etapa 6; o valor anterior é mantido. */
+	/* O cálculo (dominio/calibracao.c) e a gravação do R0 entram na etapa 6. */
 	LOG_WRN("Calibração ainda não implementada: R0 mantido em %u ohms", ctx->r0Ohms);
 	tela_mostrarMensagem("Calibração indisponível");
 	transitarPara(ESTADO_AGUARDANDO_SOPRO);

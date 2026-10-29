@@ -61,7 +61,8 @@ Na raiz do repositório, dentro do workspace do Zephyr:
 | ESP32-C3 | `west build -p always -b esp32c3_devkitm/esp32c3 app -d build/esp32c3` |
 | STM32WB55 | `west build -p always -b weact_stm32wb55_core/stm32wb55xx app -d build/stm32wb55` |
 | Simulação (Linux ou WSL 2) | `west build -p always -b native_sim app -d build/native_sim -t run` |
-| Testes (Linux ou WSL 2) | `west build -p always -b native_sim tests/maquina -d build/testes -t run` |
+| Testes da máquina (Linux ou WSL 2) | `west build -p always -b native_sim tests/maquina -d build/testes-maquina -t run` |
+| Testes do domínio (Linux ou WSL 2) | `west build -p always -b native_sim tests/dominio -d build/testes-dominio -t run` |
 
 ## Organização do projeto
 

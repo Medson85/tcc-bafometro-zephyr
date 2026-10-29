@@ -17,7 +17,7 @@ Bafômetro com saída de inibição (interlock), executando a mesma aplicação 
 | Código | Requisito | Situação |
 |---|---|---|
 | RF01 | Ao ligar, o sistema inicia com o inibidor ativo e verifica os dispositivos. | definido |
-| RF02 | O sensor passa por pré-aquecimento de 10 s, com Q7 em nível baixo e Q5 em nível alto. O display mostra a contagem regressiva. | definido; origem dos 10 s a citar |
+| RF02 | O sensor passa por pré-aquecimento de 10 s, com Q7 em nível baixo e Q5 em nível alto. O display mostra a contagem regressiva. | definido; datasheet do MQ303B: 2,0 V por 5 a 10 s antes da detecção |
 | RF03 | O sistema aguarda o sopro por no máximo 20 s. | definido; origem dos 20 s a citar |
 | RF04 | O sopro só é válido com o detector ativo por 5 s contínuos. Interrupção antes dos 5 s invalida a medição e pede repetição. | definido; tolerância a microquedas de 150 ms proposta |
 | RF05 | O sinal do sensor é coletado durante os 5 s do sopro, com Q7 em nível alto e Q5 em nível baixo. | definido |
@@ -70,7 +70,8 @@ Bafômetro com saída de inibição (interlock), executando a mesma aplicação 
 ## Questões em aberto
 
 - critérios metrológicos de aceitação;
-- limite funcional de inibição e histerese, pelo método de banda de guarda proposto;
-- origem dos tempos de 10 s e 20 s, a citar (datasheet do MQ303B ou medição);
+- limite funcional de inibição e histerese, pelo método de banda de guarda proposto; com a curva atual, que começa em 0,100 mg/L, o limite menos a histerese precisa passar de 0,100 mg/L para haver liberação;
+- origem do tempo de 20 s de espera pelo sopro, a citar;
+- topologia do divisor do sensor, a confirmar no circuito (ver [definições de hardware](hardware.md));
 - tempo mínimo entre testes;
 - tempo de acomodação após a troca de fase de Q5 e Q7.

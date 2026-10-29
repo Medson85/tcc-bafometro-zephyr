@@ -21,12 +21,22 @@ void tela_mostrarContagem(const char *texto, uint32_t segundos)
 
 void tela_mostrarResultado(const struct ResultadoMedicao *resultado)
 {
+	/* Fora da curva, o valor é o extremo saturado: a tela indica com "<" ou ">". */
+	const char *prefixo = "";
+
 	if (!resultado->valido) {
 		LOG_INF("\"Resultado indisponível\" (medição %u)", resultado->sequencia);
 		return;
 	}
 
-	LOG_INF("\"%u.%03u mg/L\" (medição %u)", resultado->concentracaoMilesimosMgL / 1000U,
+	if (resultado->faixa == FAIXA_ABAIXO) {
+		prefixo = "< ";
+	} else if (resultado->faixa == FAIXA_ACIMA) {
+		prefixo = "> ";
+	}
+
+	LOG_INF("\"%s%u.%03u mg/L\" (medição %u)", prefixo,
+		resultado->concentracaoMilesimosMgL / 1000U,
 		resultado->concentracaoMilesimosMgL % 1000U, resultado->sequencia);
 }
 
