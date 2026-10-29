@@ -48,13 +48,15 @@ app/
     aplicacao/
       bafometro.c, .h         máquina de estados, fila e temporizador
     dominio/                  sem dependência do Zephyr
-      resultado.h
-      filtro.h                contrato do filtro (etapa 2)
-      filtro_media_movel.c    (etapa 2)
-      estatistica.c           (etapa 2)
-      conversao.c             tabela Rs/R0 -> concentração (etapa 2)
-      qualidade.c             (etapa 2)
-      decisao.c               decisão de inibição com histerese (etapa 2)
+      resultado.h             resultado de uma medição
+      medicao.c, .h           filtro, trecho estável, estatística e conversões
+      filtro.h                contrato do filtro
+      filtro_media_movel.c
+      estatistica.c, .h
+      conversao.c, .h         Rs, curva Rs/R0 -> ppm e mg/L
+      qualidade.c, .h
+      calibracao.c, .h        cálculo do R0 em ar limpo
+      decisao.c, .h           decisão de inibição com histerese
     dispositivos/
       sensor_alcool.c         fases Q5/Q7, ADC e persistência do R0
       detector_sopro.c
@@ -65,10 +67,12 @@ app/
       roteiro.c               só no native_sim: percorre o fluxo completo
 tests/
   maquina/                    máquina de estados (etapa 1)
-  dominio/                    (etapa 2)
+  dominio/                    lógica de cálculo (etapa 2)
 ```
 
 Na etapa 1, os módulos de dispositivo só registram em LOG, exceto o detector de sopro, que já usa o GPIO do devicetree. As interfaces deles já são as definitivas; as etapas seguintes preenchem a implementação sem mudar a máquina de estados.
+
+Na etapa 2, a lógica de cálculo foi portada para `dominio/`. A máquina já usa a decisão de inibição; o cálculo da medição entra nela na etapa 3, quando o ADC passa a fornecer as amostras.
 
 Os pinos ficam no nó `zephyr,user` do devicetree (ver [definições de hardware](../hardware.md)). Um binding próprio só entra se a interface virar componente reutilizável.
 
@@ -87,7 +91,7 @@ Regras do SMF, conferidas no `include/zephyr/smf.h` da 4.4.0:
 | PRE_AQUECENDO | Fase de aquecimento (Q7=0, Q5=1); contagem de 10 s na tela (tique de 1 s); ao fim, fase de operação (Q7=1, Q5=0) e espera da acomodação | fim da acomodação → AGUARDANDO_SOPRO, ou CALIBRANDO_R0 se houver calibração pendente · calibrar → agenda a calibração |
 | AGUARDANDO_SOPRO | Arma a interrupção do detector; temporizador de 20 s; tela "Sopre"; estado no BLE | sopro → COLETANDO · tempo → ECONOMIA · calibrar → CALIBRANDO_R0 · cancelar → ECONOMIA |
 | COLETANDO | Desarma a interrupção; zera coleta e filtro; temporizador periódico de 50 ms | Em cada tique: lê o ADC (mV), alimenta a média móvel e lê o detector. Queda acumulada acima da tolerância antes de 5 s → mensagem de repetição e AGUARDANDO_SOPRO · 5 s completos → PROCESSANDO · falha de ADC → ERRO |
-| PROCESSANDO | Para o temporizador; estatística do trecho estável (após o transiente de 2 s); Rs, Rs/R0, concentração, qualidade e decisão de inibição | válido → APRESENTANDO_RESULTADO · qualidade insuficiente → mensagem e AGUARDANDO_SOPRO · erro → ERRO |
+| PROCESSANDO | Para o temporizador; estatística do trecho estável (após o transiente de 2 s e a janela do filtro); Rs, Rs/R0, concentração, qualidade e decisão de inibição | válido → APRESENTANDO_RESULTADO · qualidade insuficiente → mensagem e AGUARDANDO_SOPRO · erro → ERRO |
 | APRESENTANDO_RESULTADO | Tela com mg/L e qualidade; notificação BLE; **atua o inibidor** conforme a decisão; temporizador de apresentação | tempo ou repetir → FINALIZANDO |
 | FINALIZANDO | Limpa dados transitórios; registra no histórico opcional; impõe o tempo mínimo entre testes | pronto → AGUARDANDO_SOPRO |
 | ECONOMIA | Fase de repouso (combinação pendente no esquemático); display apagado; anúncio BLE lento; detector armado como despertar | sopro ou comando → PRE_AQUECENDO |
@@ -142,14 +146,43 @@ Controlador pendente (SH1107 ou SSD1327). Situação no Zephyr 4.4.0:
 
 Nos dois casos, `tela.c` expõe uma interface pequena (iniciar, mensagem, contagem regressiva e resultado), e o LVGL fica fora do escopo.
 
+## Cálculo da medição
+
+Pipeline em `dominio/medicao.c`, sobre as amostras brutas da coleta (em mV):
+
+1. **Filtro:** todas as amostras passam pela média móvel.
+2. **Trecho estável:** são descartadas as `QTD_AMOSTRAS_TRANSIENTE` iniciais (2 s) e as saídas do filtro cuja janela ainda contém amostras delas. Com coleta de 5 s a 50 ms e janela de 8, restam 53 amostras.
+3. **Estatística:** média, desvio padrão populacional e coeficiente de variação, sobre as saídas do filtro.
+4. **Rs:** a partir da tensão média sobre RL, `Rs = RL × (VCC − VRL) / VRL`, para o divisor VCC – Rs – ADC – RL – GND. Leituras a menos de 1 mV dos trilhos invalidam a medição.
+5. **Concentração:** Rs/R0 pela curva do datasheet (10 pontos, de 50 a 500 ppm), com interpolação linear entre pontos. Fora da curva, o valor satura no extremo e a faixa é registrada (`FAIXA_ABAIXO` ou `FAIXA_ACIMA`); a tela mostra "<" ou ">". Razão inválida satura no máximo.
+6. **mg/L:** ppm / 500, guardado em milésimos de mg/L.
+7. **Qualidade:** pelo coeficiente de variação, com os limiares do protótipo.
+
+Correções em relação ao protótipo:
+
+- **Fórmula de Rs.** O protótipo (V1 e V1.1) calcula `Rs = RL × VRL / (VCC − VRL)`, que vale quando o ADC mede a tensão sobre o sensor. O datasheet, o texto do TCC (`VRL = VC × RL / (RL + RS)`) e o próprio comentário de `sensor.h` na V1.1 descrevem o ADC sobre RL. Nesse divisor, a fórmula do protótipo inverte Rs/R0: depois da calibração a razão fica ≥ 1 e a conversão satura sempre em 50 ppm; com o R0 padrão, o ar limpo daria 500 ppm. Pendente: confirmar a topologia no circuito (ver [definições de hardware](../hardware.md)).
+- **Interpolação da V1.1.** A tabela da V1.1 associa a menor razão de cada segmento à menor concentração, o que inverte a interpolação dentro dos segmentos (Rs/R0 = 0,047 dá 150 ppm em vez de 200). A V1 estava correta e foi a referência do porte.
+- **Razão inválida.** Na V1.1, uma razão NaN resultava em 0 ppm; agora satura em 500 ppm, do lado de inibir.
+- **Janela do filtro no trecho estável.** Sem o descarte da janela, as primeiras saídas do filtro ainda incluiriam amostras do transiente.
+
+Notas metrológicas:
+
+- A interpolação linear entre pontos de uma curva log-log superestima a concentração em até 12,9 % (Rs/R0 = 0,1325: 75,2 ppm em vez de 66,6 ppm). É o lado conservador para o inibidor; a calibração ponta a ponta do plano substitui a curva.
+- A curva começa em 50 ppm (0,100 mg/L), mas o datasheet declara detecção de 20 a 500 ppm. Se o gráfico do datasheet permitir, estender a tabela até 20 ppm (0,040 mg/L) torna possível um limiar próximo de 0,050 mg/L.
+- Os limiares de qualidade foram definidos com 5 amostras brutas; agora o coeficiente de variação é calculado sobre 53 saídas do filtro e precisa ser revalidado.
+
 ## Inibidor
 
 - Saída mantida, **ativa** em INICIALIZANDO e em ERRO.
-- Muda apenas por medição válida: ativa se mg/L ≥ `LIMITE_INIBICAO_MGL`; libera somente se mg/L < `LIMITE_INIBICAO_MGL − HISTERESE_LIBERACAO_MGL`.
+- Muda apenas por medição aceita (válida e com qualidade diferente de descartar): ativa se a concentração ≥ `LIMITE_INIBICAO_MILESIMOS_MGL`; libera somente se < `LIMITE_INIBICAO_MILESIMOS_MGL − HISTERESE_LIBERACAO_MILESIMOS_MGL`; entre os dois, mantém o estado.
 - Qualidade insuficiente ou medição inválida não liberam; ECONOMIA preserva o último estado.
+- A decisão é tomada em PROCESSANDO (`dominio/decisao.c`) e aplicada em APRESENTANDO_RESULTADO.
 - Módulo `inibidor.c` com três funções: `inibidor_iniciar` (ativo), `inibidor_ativar` e `inibidor_liberar`.
 
-Consequência: o aparelho liga inibindo e só libera após um teste válido abaixo do limite.
+Consequências:
+
+- O aparelho liga inibindo e só libera após um teste válido abaixo do limite.
+- Ar limpo é medido como 0,100 mg/L (início da curva). Com a curva atual, só há liberação se `LIMITE − HISTERESE` for maior que 0,100 mg/L.
 
 ## Calibração e persistência do R0
 
@@ -188,18 +221,18 @@ Pacote de resultado em little-endian, 12 bytes, dentro dos 20 bytes úteis do MT
 
 - `ContextoBafometro`: `struct smf_ctx` como primeiro campo, `eventoAtual`, `geracaoAtual`, `ColetaMedicao`, `ResultadoMedicao`, `r0`, `r0Calibrado` e `codigoErro`.
 - `ColetaMedicao`: vetor estático de 110 posições (5 s / 50 ms + margem), `qtdValidas`, `qtdDescartadas`, `inicioMs`, mínimo e máximo, contexto do filtro (soma corrente, índice, preenchidas) e contadores de tiques com e sem sopro.
-- `ResultadoMedicao`: média em mV, desvio, Rs, R0, Rs/R0, ppm, mg/L, qualidade, flags de validade, calibração e inibição, e sequência.
-- Histórico circular de 10 resultados: opcional, para diagnóstico via BLE.
+- `ResultadoMedicao` (`dominio/resultado.h`): tensão média, desvio, coeficiente de variação, Rs, Rs/R0, ppm, faixa da curva, concentração em milésimos de mg/L, qualidade, quantidade de amostras do trecho estável, flags de validade, calibração e inibição, e sequência.
+- Histórico circular de 10 resultados (`historicoLeituras` do protótipo): opcional, entra com o BLE na etapa 5, que é quem o consome.
 - Tipos do Zephyr (`gpio_dt_spec`, `adc_dt_spec`, `bt_conn`) permanecem privados aos módulos de dispositivo.
 
-## Filtro (proposta)
+## Filtro
 
-`dominio/filtro.h` declara o contrato e `filtro_media_movel.c` o implementa:
+`dominio/filtro.h` declara o contrato e `filtro_media_movel.c` o implementa (soma corrente sobre janela circular; a janela parcial do início usa as amostras disponíveis):
 
 ```c
-void filtro_iniciar(ContextoFiltro *ctx);
-void filtro_adicionar(ContextoFiltro *ctx, int32_t amostraMv);
-int32_t filtro_valor(const ContextoFiltro *ctx);
+void filtro_iniciar(struct ContextoFiltro *ctx);
+void filtro_adicionar(struct ContextoFiltro *ctx, int32_t amostraMv);
+int32_t filtro_valor(const struct ContextoFiltro *ctx);
 ```
 
 Um filtro de Kalman futuro implementa as mesmas assinaturas em `filtro_kalman.c`, e a troca é feita no CMake, sem indireção em tempo de execução. Ponteiros de função (Strategy completo) só entram se for preciso trocar de filtro durante a execução.
@@ -220,7 +253,7 @@ Recusados, com registro: Singleton formal, orientação a objetos em C, factory,
 
 | Parâmetro | Valor inicial | Situação |
 |---|---|---|
-| `TEMPO_PRE_AQUECIMENTO_MS` | 10 000 | definido; origem a citar |
+| `TEMPO_PRE_AQUECIMENTO_MS` | 10 000 | definido; datasheet do MQ303B: 2,0 V por 5 a 10 s antes da detecção |
 | `TEMPO_ESPERA_SOPRO_MS` | 20 000 | definido; origem a citar |
 | `TEMPO_SOPRO_MINIMO_MS` | 5 000 | definido |
 | `PERIODO_AMOSTRAGEM_MS` | 50 | proposta; validar |
@@ -228,19 +261,23 @@ Recusados, com registro: Singleton formal, orientação a objetos em C, factory,
 | `TEMPO_TRANSIENTE_MS` | 2 000 | proposta (herança dos 2 200 ms do protótipo) |
 | `JANELA_MEDIA_MOVEL` | 8 | proposta; faixa de 8 a 16 |
 | `TEMPO_APRESENTACAO_MS` | 10 000 | proposta |
-| `TEMPO_MIN_ENTRE_TESTES_MS` | a levantar | pendente |
-| `TEMPO_ACOMODACAO_FASE_MS` | a levantar | pendente |
+| `TEMPO_MIN_ENTRE_TESTES_MS` | 30 000 | provisório; a levantar |
+| `TEMPO_ACOMODACAO_FASE_MS` | 500 | provisório; a levantar |
+| `QTD_MAXIMA_AMOSTRAS` | 110 | 5 s a 50 ms, com margem |
 | `QTD_AMOSTRAS_CALIBRACAO` / `INTERVALO_CALIBRACAO_MS` | 60 / 100 | protótipo |
+| `PORCENTAGEM_MINIMA_AMOSTRAS_VALIDAS` | 50 | protótipo |
 | `R0_PADRAO_OHMS` | 24 000 | protótipo |
 | `FAIXA_R0_MIN_OHMS` / `FAIXA_R0_MAX_OHMS` | a definir | pendente |
 | `RESISTENCIA_CARGA_OHMS` / `TENSAO_ALIMENTACAO_MV` | 3 300 / 3 300 | circuito |
-| `LIMITE_INIBICAO_MGL` / `HISTERESE_LIBERACAO_MGL` | método de banda de guarda | pendente |
-| `QUALIDADE_CV_*` | 2 / 5 / 10 % | revalidar (calibrados com 5 amostras; agora são cerca de 100) |
+| `MARGEM_TENSAO_VALIDA_MV` | 1 | protótipo |
+| `FATOR_PPM_PARA_MGL` | 500 | protótipo; superestima de 6 a 9 % frente ao gás ideal |
+| `LIMITE_INIBICAO_MILESIMOS_MGL` / `HISTERESE_LIBERACAO_MILESIMOS_MGL` | 150 / 20 | provisório; método da banda de guarda |
+| `QUALIDADE_CV_*` | 2 / 5 / 10 % | revalidar (definidos com 5 amostras brutas; agora são 53 saídas do filtro) |
 
 A curva Rs/R0 → concentração fica como tabela em `conversao.c`, sem constante de conversão solta.
 
 ## Testes
 
-1. Domínio puro com ztest no `native_sim`: filtro (janela parcial e cheia), estatística, Rs (incluindo guardas), interpolação e extremos da tabela, qualidade e decisão de inibição com histerese.
+1. Domínio puro (`tests/dominio`, 36 casos em 7 suítes) com ztest no `native_sim`: filtro (janela parcial e cheia), estatística, Rs (reconstrução do divisor, direção física e guardas), pontos, interpolação, continuidade e extremos da curva, qualidade, calibração do R0, decisão de inibição com histerese e composição da medição.
 2. Máquina de estados (`tests/maquina`, 14 casos) com eventos injetados no tempo simulado do `native_sim`: sequência normal, duração do pré-aquecimento e da coleta, sopro interrompido aos 3 s, microqueda tolerada, fim da espera levando à economia, despertar, reinício da espera por comando, evento de geração antiga, fila cheia durante a coleta, cancelamento, falha levando ao erro, calibração na espera e a partir da economia, e sopro anterior ao aviso.
 3. Checklist de hardware por alvo: polaridades, fases Q5/Q7, ADC contra referência, display, BLE (pacote e comando), estado do inibidor no boot, em erro e em economia, e reinicialização.

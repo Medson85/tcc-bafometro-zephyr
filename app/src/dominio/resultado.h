@@ -1,6 +1,6 @@
 /*
- * Resultado de uma medição. Os campos de cálculo (mV, Rs, Rs/R0 e ppm)
- * entram na etapa 2, junto com o domínio portado do protótipo.
+ * Resultado de uma medição. medicao_calcular() preenche os campos de cálculo;
+ * a máquina de estados preenche sequencia, calibrado e inibir.
  */
 
 #ifndef BAFOMETRO_RESULTADO_H
@@ -9,13 +9,24 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "dominio/conversao.h"
+#include "dominio/qualidade.h"
+
 struct ResultadoMedicao {
 	bool valido;
 	bool calibrado;
 	bool inibir;
-	uint8_t qualidade;
+	enum QualidadeLeitura qualidade;
+	enum FaixaCurva faixa;
 	uint16_t sequencia;
+	uint16_t quantidadeAmostras;       /* amostras do trecho estável */
 	uint16_t concentracaoMilesimosMgL; /* mg/L × 1000, como no pacote BLE */
+	float tensaoMediaMv;
+	float desvioPadraoMv;
+	float coefVariacaoPct;
+	float resistenciaRsOhms;
+	float relacaoRsR0;
+	float concentracaoPpm;
 };
 
 #endif /* BAFOMETRO_RESULTADO_H */

@@ -67,6 +67,7 @@ As propostas abaixo estão detalhadas na [arquitetura do software embarcado](arq
 ## Questões ainda abertas
 
 - critérios metrológicos de aceitação;
+- topologia do divisor do sensor (ADC sobre RL ou sobre o sensor), que decide a fórmula de Rs;
 - controlador do mostrador OLED (SH1107 ou SSD1327);
 - pino da saída de inibição no ESP32-C3;
 - combinação de Q5 e Q7 no repouso do aquecedor;
