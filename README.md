@@ -36,7 +36,7 @@ Modelos, interfaces, conexões, pinagem e demais definições físicas são docu
 - CMake 4.4.0
 - Windows de 64 bits
 
-A configuração completa será registrada no arquivo `docs/desenvolvimento/ambiente.md`.
+A configuração completa está registrada em [ambiente de desenvolvimento](docs/desenvolvimento/ambiente.md).
 
 ## Plataformas previstas
 
