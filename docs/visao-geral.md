@@ -54,12 +54,20 @@ O projeto prioriza:
 - Em uma falha crítica, o inibidor deverá permanecer ativo.
 - A saída de inibição deverá ser mantida.
 
+## Propostas a validar em bancada
+
+As propostas abaixo estão detalhadas na [arquitetura do software embarcado](arquitetura/arquitetura-firmware.md) e no [plano de implementação](desenvolvimento/plano-implementacao.md).
+
+- taxa de amostragem de 20 Hz (período de 50 ms), com 100 amostras em 5 segundos;
+- janela da média móvel de 8 amostras, com faixa de 8 a 16;
+- conversão por calibração ponta a ponta de Rs/R0 para mg/L, sem fator fixo entre ppm e mg/L;
+- limite funcional de inibição igual ao limiar de decisão menos a incerteza expandida medida, com histerese na liberação;
+- calibração do R0 apenas por comando, com o sensor aquecido, e valor persistido entre ligações.
+
 ## Questões ainda abertas
 
-- taxa de amostragem;
-- tamanho da janela da média móvel;
-- método de conversão entre ppm e mg/L;
-- limite funcional de inibição;
-- procedimento de calibração;
 - critérios metrológicos de aceitação;
-- detalhamento da arquitetura do programa embarcado.
+- controlador do mostrador OLED (SH1107 ou SSD1327);
+- pino da saída de inibição no ESP32-C3;
+- combinação de Q5 e Q7 no repouso do aquecedor;
+- forma de medir o esforço de migração entre as plataformas.
