@@ -1,0 +1,12 @@
+/*
+ * Detector de sopro no GPIO emulado do native_sim (pino 0).
+ * O roteiro de simulação e os testes o acionam com gpio_emul_input_set().
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	zephyr,user {
+		detector-sopro-gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
+	};
+};

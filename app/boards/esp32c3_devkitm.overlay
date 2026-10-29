@@ -1,0 +1,60 @@
+/*
+ * ESP32-C3-DevKitM-1: pinagem de docs/hardware.md.
+ * Na etapa 1 só o detector de sopro (GPIO10) é usado; para simular um sopro,
+ * ligue o GPIO10 ao 3V3.
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp32c3-pinctrl.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+&pinctrl {
+	i2c0_bafometro: i2c0_bafometro {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO6>, <I2C0_SCL_GPIO7>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+};
+
+/* A placa habilita o SPI2 em GPIO2/6/7/10, que conflita com o I2C e o detector. */
+&spi2 {
+	status = "disabled";
+};
+
+&i2c0 {
+	status = "okay";
+	pinctrl-0 = <&i2c0_bafometro>; /* a placa usa GPIO1/GPIO3 por padrão; GPIO3 é o ADC */
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>; /* 400 kbit/s */
+};
+
+&adc0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@3 {
+		reg = <3>; /* ADC1_CH3 = GPIO3 */
+		zephyr,gain = "ADC_GAIN_1_4"; /* atenuação 11 dB -> 0..2500 mV */
+		zephyr,reference = "ADC_REF_INTERNAL"; /* única referência aceita */
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>; /* não parametrizável */
+		zephyr,resolution = <12>; /* única resolução no C3 */
+	};
+};
+
+/ {
+	zephyr,user {
+		io-channels = <&adc0 3>;
+		/* Polaridade dos enables do aquecedor: confirmar no esquemático. */
+		aquecimento2v-gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+		aquecimento0v9-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+		detector-sopro-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+		btn-energia-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		btn-interface-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		/* inibidor-gpios: pino pendente (ver docs/hardware.md) */
+	};
+};

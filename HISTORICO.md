@@ -17,7 +17,8 @@ Este arquivo registra as mudanças relevantes realizadas no projeto.
 - requisitos funcionais, não funcionais, restrições e critérios de aceitação;
 - definições de hardware do ESP32-C3-MINI-1 e da placa do STM32WB55;
 - arquitetura do software embarcado;
-- plano de implementação.
+- plano de implementação;
+- esqueleto da máquina de estados (etapa 1), com roteiro de simulação e testes no native_sim.
 
 ### Alterado
 
