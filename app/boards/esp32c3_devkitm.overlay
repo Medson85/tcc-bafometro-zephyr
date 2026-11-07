@@ -1,7 +1,6 @@
 /*
  * ESP32-C3-DevKitM-1: pinagem de docs/hardware.md.
- * Na etapa 1 só o detector de sopro (GPIO10) é usado; para simular um sopro,
- * ligue o GPIO10 ao 3V3.
+ * Para simular um sopro, ligue o GPIO10 ao 3V3.
  */
 
 #include <zephyr/dt-bindings/pinctrl/esp32c3-pinctrl.h>
@@ -55,6 +54,10 @@
 		detector-sopro-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
 		btn-energia-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 		btn-interface-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-		/* inibidor-gpios: pino pendente (ver docs/hardware.md) */
+		/*
+		 * PROVISÓRIO: GPIO2 (strapping, com pull-up externo); com driver ativo em
+		 * nível alto, o reset coincide com "inibindo". Ver docs/hardware.md.
+		 */
+		inibidor-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 	};
 };

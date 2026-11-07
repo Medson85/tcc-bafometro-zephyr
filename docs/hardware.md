@@ -11,7 +11,7 @@ Componentes, interfaces, conexões, pinagem e restrições físicas do bafômetr
 | Detector digital de sopro | Entrada digital com interrupção | Definido |
 | Display OLED 1,5" 128×128 (GME128128-01-I2C) | I²C | Controlador pendente |
 | Bluetooth LE | Rádio integrado (ESP32-C3) / coprocessador M0+ (STM32WB55) | Definido |
-| Saída de inibição | Saída digital mantida, *fail-active* | Pino pendente |
+| Saída de inibição | Saída digital mantida, *fail-active* | GPIO2 provisório (confirmar na bancada) |
 | Botões de energia lógica e de interface | Entradas digitais | Definido |
 
 ## Pendências
@@ -21,7 +21,7 @@ Componentes, interfaces, conexões, pinagem e restrições físicas do bafômetr
    - SH1107: não há binding. O mais próximo é `sinowealth,sh1106` (128×64, atendido pelo driver `display_ssd1306.c`); o uso com 128×128 não é suportado oficialmente e precisa de teste de bancada.
 2. **Pino da saída de inibição.** Ver "Orçamento de pinos esgotado" e a nota sobre a DevKitM-1.
 3. **Combinação de Q5 e Q7 no repouso do aquecedor.** O protótipo termina com os dois em nível alto; definir no esquemático.
-4. **Topologia do divisor do MQ303B.** O firmware adota o ADC sobre RL (VCC – Rs – ADC – RL – GND), como no datasheet e no texto do TCC, com `Rs = RL × (VCC − VRL) / VRL`. O protótipo usava a fórmula do ADC sobre o sensor, que inverte Rs/R0 nesse divisor. Confirmar com o esquemático ou com multímetro antes da etapa 3.
+4. **Topologia do divisor do MQ303B.** O firmware adota o ADC sobre RL (VCC – Rs – ADC – RL – GND), como no datasheet e no texto do TCC, com `Rs = RL × (VCC − VRL) / VRL`. O protótipo usava a fórmula do ADC sobre o sensor, que inverte Rs/R0 nesse divisor. Conferir na bancada da etapa 3: em ar limpo e com vapor de álcool, a tensão no nó do ADC deve subir com o álcool. Se cair, o ADC está sobre o sensor e a fórmula precisa ser trocada.
 5. **Faixa do ADC.** Com RL = 3,3 kΩ, VCC = 3,3 V e R0 = 24 kΩ (padrão do protótipo), a tensão sobre RL passa dos 2500 mV de fundo de escala a 11 dB a partir de cerca de 220 ppm (0,44 mg/L). Acima disso a leitura satura, ainda do lado de inibir. RL e R0 reais definem o ponto.
 6. **Datasheet do MQ303B (v1.4).** Confirmados: aquecimento de operação em 0,9 V ± 0,1 V; "Before the normal detection, sensor should be applied 2.0±0.2V high voltage for 5-10 seconds", origem dos 10 s de pré-aquecimento; R0 é a resistência em ar limpo; faixa de detecção de 20 a 500 ppm. Pendentes: corrente do aquecedor e o trecho da curva entre 20 e 50 ppm.
 7. **Checklist antes do esquemático.** Ver a seção do ESP32-C3.
@@ -143,7 +143,7 @@ Overlay da placa `esp32c3_devkitm` (arquivo `boards/esp32c3_devkitm.overlay` da 
 		detector-sopro-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
 		btn-energia-gpios = <&gpio0 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 		btn-interface-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-		/* inibidor-gpios: pino pendente (ver orçamento de pinos) */
+		inibidor-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;          /* PROVISÓRIO: strapping, pull-up externo */
 	};
 };
 ```

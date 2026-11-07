@@ -8,7 +8,8 @@
 
 #include <stdbool.h>
 
-void inibidor_iniciar(void);
+/* Configura o pino já ativo. Retorna 0 ou um erro negativo. */
+int inibidor_iniciar(void);
 void inibidor_ativar(void);
 void inibidor_liberar(void);
 bool inibidor_estaAtivo(void);

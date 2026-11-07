@@ -74,6 +74,8 @@ Na etapa 1, os módulos de dispositivo só registram em LOG, exceto o detector d
 
 Na etapa 2, a lógica de cálculo foi portada para `dominio/`. A máquina já usa a decisão de inibição; o cálculo da medição entra nela na etapa 3, quando o ADC passa a fornecer as amostras.
 
+Na etapa 3, `sensor_alcool` e `inibidor` passaram a usar o devicetree. Cada recurso é opcional por placa (`DT_NODE_HAS_PROP`): sem os pinos do aquecedor ou do inibidor, o módulo registra só em LOG; sem `io-channels`, a leitura retorna `-ENOTSUP` e a máquina vai para ERRO. A troca de fase do aquecedor desliga antes de ligar, para Q5 e Q7 nunca conduzirem juntos. Falha de leitura do ADC em COLETANDO ou CALIBRANDO_R0 leva ao ERRO; falha ao configurar o inibidor leva ao ERRO com `FALHA_INIBIDOR`.
+
 Os pinos ficam no nó `zephyr,user` do devicetree (ver [definições de hardware](../hardware.md)). Um binding próprio só entra se a interface virar componente reutilizável.
 
 ## Máquina de estados
@@ -177,7 +179,7 @@ Notas metrológicas:
 - Muda apenas por medição aceita (válida e com qualidade diferente de descartar): ativa se a concentração ≥ `LIMITE_INIBICAO_MILESIMOS_MGL`; libera somente se < `LIMITE_INIBICAO_MILESIMOS_MGL − HISTERESE_LIBERACAO_MILESIMOS_MGL`; entre os dois, mantém o estado.
 - Qualidade insuficiente ou medição inválida não liberam; ECONOMIA preserva o último estado.
 - A decisão é tomada em PROCESSANDO (`dominio/decisao.c`) e aplicada em APRESENTANDO_RESULTADO.
-- Módulo `inibidor.c` com três funções: `inibidor_iniciar` (ativo), `inibidor_ativar` e `inibidor_liberar`.
+- Módulo `inibidor.c` com `inibidor_iniciar` (configura o pino já ativo; retorna `-ENODEV` em falha), `inibidor_ativar`, `inibidor_liberar` e `inibidor_estaAtivo`.
 
 Consequências:
 

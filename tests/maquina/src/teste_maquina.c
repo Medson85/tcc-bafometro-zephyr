@@ -1,8 +1,11 @@
 /*
  * Testes da máquina de estados no native_sim, com eventos injetados:
- * o detector é acionado pelo GPIO emulado e o tempo é o simulado.
+ * o detector é acionado pelo GPIO emulado, a tensão sobre RL vem do ADC
+ * emulado e o tempo é o simulado.
  */
 
+#include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/adc/adc_emul.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/gpio/gpio_emul.h>
 #include <zephyr/kernel.h>
@@ -14,6 +17,33 @@
 
 static const struct gpio_dt_spec pinoDetector =
 	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), detector_sopro_gpios);
+static const struct gpio_dt_spec pinoAquecimento2V =
+	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), aquecimento2v_gpios);
+static const struct gpio_dt_spec pinoAquecimento0V9 =
+	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), aquecimento0v9_gpios);
+static const struct gpio_dt_spec pinoInibidor =
+	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), inibidor_gpios);
+static const struct adc_dt_spec canalSensor = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
+
+/* Tensão sobre RL para uma razão Rs/R0, com o R0 padrão: VRL = VCC * RL / (RL + Rs). */
+static uint32_t tensaoParaRelacaoMv(float relacaoRsR0)
+{
+	const float rsOhms = (float)R0_PADRAO_OHMS * relacaoRsR0;
+
+	return (uint32_t)(TENSAO_ALIMENTACAO_MV * RESISTENCIA_CARGA_OHMS /
+				  (RESISTENCIA_CARGA_OHMS + rsOhms) +
+			  0.5f);
+}
+
+static void definirTensaoMv(uint32_t tensaoMv)
+{
+	zassert_ok(adc_emul_const_value_set(canalSensor.dev, canalSensor.channel_id, tensaoMv));
+}
+
+static int pino(const struct gpio_dt_spec *spec)
+{
+	return gpio_emul_output_get(spec->port, spec->pin);
+}
 
 static void soprar(bool presente)
 {
@@ -65,6 +95,15 @@ static void antesDeCadaTeste(void *fixture)
 	/* O pino só aceita valores depois de configurado na inicialização da máquina. */
 	zassert_ok(bafometro_iniciar());
 	soprar(false);
+	definirTensaoMv(tensaoParaRelacaoMv(1.0f)); /* ar limpo */
+}
+
+/* Do aviso "Sopre" até o resultado, com a tensão já definida. */
+static void medirSopro(void)
+{
+	chegarEmColetando();
+	zassert_true(processarAte(ESTADO_APRESENTANDO_RESULTADO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	soprar(false);
 }
 
 ZTEST_SUITE(maquina, NULL, NULL, antesDeCadaTeste, NULL, NULL);
@@ -73,6 +112,85 @@ ZTEST(maquina, test_inicia_com_inibidor_ativo_em_pre_aquecimento)
 {
 	zassert_equal(bafometro_estadoAtual(), ESTADO_PRE_AQUECENDO);
 	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+}
+
+ZTEST(maquina, test_fases_do_aquecedor_nos_pinos)
+{
+	/* Pré-aquecimento: 2,0 V (Q5) ligado, 0,9 V (Q7) desligado. */
+	zassert_equal(pino(&pinoAquecimento2V), 1);
+	zassert_equal(pino(&pinoAquecimento0V9), 0);
+
+	chegarEmAguardandoSopro();
+	zassert_equal(pino(&pinoAquecimento2V), 0);
+	zassert_equal(pino(&pinoAquecimento0V9), 1);
+
+	zassert_true(processarAte(ESTADO_ECONOMIA, TEMPO_ESPERA_SOPRO_MS + 100U));
+	zassert_equal(pino(&pinoAquecimento2V), 0);
+	zassert_equal(pino(&pinoAquecimento0V9), 0);
+}
+
+ZTEST(maquina, test_sopro_com_alcool_mantem_o_inibidor_ativo)
+{
+	definirTensaoMv(tensaoParaRelacaoMv(0.047f)); /* 200 ppm, 0,400 mg/L */
+	medirSopro();
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+}
+
+ZTEST(maquina, test_sopro_em_ar_limpo_libera_e_novo_sopro_com_alcool_inibe)
+{
+	medirSopro();
+	zassert_false(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 0);
+
+	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO,
+				  TEMPO_APRESENTACAO_MS + TEMPO_MIN_ENTRE_TESTES_MS + 100U));
+	definirTensaoMv(tensaoParaRelacaoMv(0.047f));
+	soprar(true);
+	zassert_true(processarAte(ESTADO_APRESENTANDO_RESULTADO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	soprar(false);
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+}
+
+/* Patamar que muda no meio do trecho estável: coeficiente de variação alto. */
+static int tensaoInstavel(const struct device *dev, unsigned int canal, void *dados,
+			  uint32_t *resultadoMv)
+{
+	uint32_t *leituras = dados;
+
+	ARG_UNUSED(dev);
+	ARG_UNUSED(canal);
+	*resultadoMv = ((*leituras)++ < 75U) ? 2000U : 2600U;
+	return 0;
+}
+
+ZTEST(maquina, test_leitura_instavel_pede_novo_sopro_sem_mudar_o_inibidor)
+{
+	static uint32_t leituras;
+
+	chegarEmColetando();
+	leituras = 0U;
+	zassert_ok(adc_emul_value_func_set(canalSensor.dev, canalSensor.channel_id, tensaoInstavel,
+					   &leituras));
+	zassert_true(processarAte(ESTADO_PROCESSANDO, TEMPO_SOPRO_MINIMO_MS + 100U) ||
+		     (bafometro_estadoAtual() == ESTADO_AGUARDANDO_SOPRO));
+	processarPor(10U);
+	zassert_equal(bafometro_estadoAtual(), ESTADO_AGUARDANDO_SOPRO);
+	zassert_true(inibidor_estaAtivo());
+	soprar(false);
+}
+
+ZTEST(maquina, test_tensao_nos_trilhos_leva_ao_erro)
+{
+	definirTensaoMv(0U);
+	chegarEmColetando();
+	zassert_true(processarAte(ESTADO_ERRO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoAquecimento2V), 0);
+	zassert_equal(pino(&pinoAquecimento0V9), 0);
+	soprar(false);
 }
 
 ZTEST(maquina, test_pre_aquecimento_e_acomodacao_duram_o_configurado)
@@ -84,7 +202,7 @@ ZTEST(maquina, test_pre_aquecimento_e_acomodacao_duram_o_configurado)
 		       2);
 }
 
-ZTEST(maquina, test_sopro_continuo_coleta_por_5s_e_mantem_inibidor_ativo)
+ZTEST(maquina, test_sopro_continuo_coleta_por_5s)
 {
 	int64_t inicio;
 
@@ -93,9 +211,6 @@ ZTEST(maquina, test_sopro_continuo_coleta_por_5s_e_mantem_inibidor_ativo)
 	zassert_true(processarAte(ESTADO_APRESENTANDO_RESULTADO, TEMPO_SOPRO_MINIMO_MS + 100U));
 	zassert_within(k_uptime_get() - inicio, TEMPO_SOPRO_MINIMO_MS, 2);
 	soprar(false);
-
-	/* Sem resultado válido (etapa 1), o inibidor não pode ser liberado. */
-	zassert_true(inibidor_estaAtivo());
 
 	zassert_true(processarAte(ESTADO_FINALIZANDO, TEMPO_APRESENTACAO_MS + 100U));
 	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO, TEMPO_MIN_ENTRE_TESTES_MS + 100U));

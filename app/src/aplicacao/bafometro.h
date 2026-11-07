@@ -44,6 +44,7 @@ enum CodigoFalha {
 	FALHA_NENHUMA,
 	FALHA_DETECTOR_SOPRO,
 	FALHA_SENSOR_ALCOOL,
+	FALHA_INIBIDOR,
 };
 
 struct EventoBafometro {

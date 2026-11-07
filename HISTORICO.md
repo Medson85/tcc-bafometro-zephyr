@@ -19,7 +19,9 @@ Este arquivo registra as mudanças relevantes realizadas no projeto.
 - arquitetura do software embarcado;
 - plano de implementação;
 - esqueleto da máquina de estados (etapa 1), com roteiro de simulação e testes no native_sim;
-- lógica de cálculo portada do protótipo (etapa 2), com testes no native_sim.
+- lógica de cálculo portada do protótipo (etapa 2), com testes no native_sim;
+- leitura do sensor, fases do aquecedor e saída de inibição pelo devicetree (etapa 3), com ADC e GPIO emulados nos testes;
+- cálculo da medição em PROCESSANDO e do R0 em CALIBRANDO_R0, ainda sem persistência.
 
 ### Corrigido
 

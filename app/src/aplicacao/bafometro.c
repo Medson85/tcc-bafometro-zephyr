@@ -21,7 +21,9 @@
 #include "dispositivos/inibidor.h"
 #include "dispositivos/sensor_alcool.h"
 #include "dispositivos/tela.h"
+#include "dominio/calibracao.h"
 #include "dominio/decisao.h"
+#include "dominio/medicao.h"
 #include "dominio/resultado.h"
 
 LOG_MODULE_REGISTER(bafometro);
@@ -58,6 +60,8 @@ struct ContextoBafometro {
 	uint32_t r0Ohms;
 	bool r0Calibrado;
 	uint16_t sequenciaMedicao;
+	int32_t amostrasMv[QTD_MAXIMA_AMOSTRAS];
+	struct CalibracaoR0 calibracao;
 	struct ResultadoMedicao resultado;
 };
 
@@ -212,11 +216,12 @@ static void entrarInicializando(void *obj)
 
 	anunciarEstado(ESTADO_INICIALIZANDO);
 	pararTemporizador();
-	inibidor_iniciar(); /* nasce ATIVO: partida segura */
 	tela_mostrarMensagem("Iniciando");
 
 	ctx->codigoErro = FALHA_NENHUMA;
-	if (detector_sopro_iniciar(aoDetectarSopro) != 0) {
+	if (inibidor_iniciar() != 0) { /* nasce ATIVO: partida segura */
+		ctx->codigoErro = FALHA_INIBIDOR;
+	} else if (detector_sopro_iniciar(aoDetectarSopro) != 0) {
 		ctx->codigoErro = FALHA_DETECTOR_SOPRO;
 	} else if (sensor_alcool_iniciar() != 0) {
 		ctx->codigoErro = FALHA_SENSOR_ALCOOL;
@@ -383,7 +388,12 @@ static enum smf_state_result executarColetando(void *obj)
 		}
 	}
 
-	/* A leitura do ADC e o registro das amostras entram na etapa 3. */
+	if (sensor_alcool_lerTensaoMv(&ctx->amostrasMv[ctx->tiquesColetados]) != 0) {
+		ctx->codigoErro = FALHA_SENSOR_ALCOOL;
+		transitarPara(ESTADO_ERRO);
+		return SMF_EVENT_HANDLED;
+	}
+
 	ctx->tiquesColetados++;
 	if (ctx->tiquesColetados >= QTD_TIQUES_COLETA) {
 		transitarPara(ESTADO_PROCESSANDO);
@@ -400,23 +410,34 @@ static void entrarProcessando(void *obj)
 	pararTemporizador();
 	ctx->sequenciaMedicao++;
 
-	/*
-	 * O cálculo está em dominio/medicao.c, mas as amostras só chegam com a
-	 * leitura do ADC, na etapa 3. Até lá o resultado é inválido e a decisão
-	 * mantém o estado do inibidor, que nunca chega a ser liberado. Na etapa 3,
-	 * resultado inválido ou de qualidade insuficiente volta para AGUARDANDO_SOPRO.
-	 */
-	ctx->resultado = (struct ResultadoMedicao){
-		.valido = false,
-		.qualidade = QUALIDADE_DESCARTAR,
-	};
+	(void)medicao_calcular(ctx->amostrasMv, ctx->tiquesColetados, (float)ctx->r0Ohms,
+			       &ctx->resultado);
 	ctx->resultado.calibrado = ctx->r0Calibrado;
 	ctx->resultado.sequencia = ctx->sequenciaMedicao;
-	ctx->resultado.inibir = decisao_deveInibir(
-		inibidor_estaAtivo(),
-		ctx->resultado.valido && (ctx->resultado.qualidade != QUALIDADE_DESCARTAR),
-		ctx->resultado.concentracaoMilesimosMgL);
 
+	if (!ctx->resultado.valido) {
+		/* Tensão média nos trilhos durante toda a coleta: falha do circuito. */
+		LOG_ERR("Medição inválida: tensão média %d mV", (int)ctx->resultado.tensaoMediaMv);
+		ctx->codigoErro = FALHA_SENSOR_ALCOOL;
+		transitarPara(ESTADO_ERRO);
+		return;
+	}
+
+	LOG_INF("Medição %u: %d mV, Rs %d ohms, Rs/R0 %d/1000, %d ppm, CV %d/10 %%, qualidade %d",
+		ctx->resultado.sequencia, (int)ctx->resultado.tensaoMediaMv,
+		(int)ctx->resultado.resistenciaRsOhms, (int)(ctx->resultado.relacaoRsR0 * 1000.0f),
+		(int)ctx->resultado.concentracaoPpm, (int)(ctx->resultado.coefVariacaoPct * 10.0f),
+		ctx->resultado.qualidade);
+
+	if (ctx->resultado.qualidade == QUALIDADE_DESCARTAR) {
+		/* Não muda o inibidor: só uma medição aceita muda o estado. */
+		tela_mostrarMensagem("Leitura instável, sopre novamente");
+		transitarPara(ESTADO_AGUARDANDO_SOPRO);
+		return;
+	}
+
+	ctx->resultado.inibir = decisao_deveInibir(inibidor_estaAtivo(), true,
+						   ctx->resultado.concentracaoMilesimosMgL);
 	transitarPara(ESTADO_APRESENTANDO_RESULTADO);
 }
 
@@ -529,26 +550,45 @@ static void entrarCalibrandoR0(void *obj)
 	anunciarEstado(ESTADO_CALIBRANDO_R0);
 	tela_mostrarMensagem("Calibrando: mantenha o ar limpo");
 	ctx->tiquesRestantes = QTD_AMOSTRAS_CALIBRACAO;
+	calibracao_iniciar(&ctx->calibracao);
 	armarTemporizador(FINALIDADE_CALIBRACAO, INTERVALO_CALIBRACAO_MS, INTERVALO_CALIBRACAO_MS);
 }
 
 static enum smf_state_result executarCalibrandoR0(void *obj)
 {
 	struct ContextoBafometro *ctx = obj;
+	int32_t tensaoMv;
+	float r0Ohms;
 
 	if (tratarFalha(ctx) || !ehTempo(ctx)) {
 		return SMF_EVENT_HANDLED;
 	}
 
-	/* A leitura das amostras entra na etapa 3. */
+	if (sensor_alcool_lerTensaoMv(&tensaoMv) != 0) {
+		ctx->codigoErro = FALHA_SENSOR_ALCOOL;
+		transitarPara(ESTADO_ERRO);
+		return SMF_EVENT_HANDLED;
+	}
+
+	calibracao_adicionar(&ctx->calibracao, (float)tensaoMv);
 	ctx->tiquesRestantes--;
 	if (ctx->tiquesRestantes > 0U) {
 		return SMF_EVENT_HANDLED;
 	}
 
-	/* O cálculo (dominio/calibracao.c) e a gravação do R0 entram na etapa 6. */
-	LOG_WRN("Calibração ainda não implementada: R0 mantido em %u ohms", ctx->r0Ohms);
-	tela_mostrarMensagem("Calibração indisponível");
+	/* O R0 vale até reiniciar: a gravação entra na etapa 6. */
+	if (calibracao_concluir(&ctx->calibracao, &r0Ohms)) {
+		ctx->r0Ohms = (uint32_t)(r0Ohms + 0.5f);
+		ctx->r0Calibrado = true;
+		LOG_INF("R0 calibrado: %u ohms (%u amostras válidas)", ctx->r0Ohms,
+			ctx->calibracao.validas);
+		tela_mostrarMensagem("Calibração concluída");
+	} else {
+		LOG_WRN("Calibração rejeitada (%u válidas): R0 mantido em %u ohms",
+			ctx->calibracao.validas, ctx->r0Ohms);
+		tela_mostrarMensagem("Calibração falhou");
+	}
+
 	transitarPara(ESTADO_AGUARDANDO_SOPRO);
 	return SMF_EVENT_HANDLED;
 }
