@@ -94,6 +94,13 @@ static void executarRoteiro(void *p1, void *p2, void *p3)
 	aguardarEstado(ESTADO_CALIBRANDO_R0);
 	aguardarEstado(ESTADO_AGUARDANDO_SOPRO);
 
+	LOG_INF("--- Roteiro 7: sensor desconectado: falha, ERRO e inibidor ativo ---");
+	(void)adc_emul_const_value_set(canalSensor.dev, canalSensor.channel_id, 5U);
+	k_sleep(K_SECONDS(1));
+	soprar(true);
+	aguardarEstado(ESTADO_ERRO);
+	soprar(false);
+
 	LOG_INF("--- Roteiro concluído ---");
 	LOG_PANIC();
 	posix_exit(0);

@@ -40,11 +40,13 @@ enum CodigoComando {
 	COMANDO_REINICIAR,
 };
 
+/* Códigos estáveis: novos valores entram no fim (vão para a tela e o BLE). */
 enum CodigoFalha {
 	FALHA_NENHUMA,
 	FALHA_DETECTOR_SOPRO,
-	FALHA_SENSOR_ALCOOL,
+	FALHA_SENSOR_ALCOOL, /* ADC ou medição inválida (sensor desconectado, frio ou em curto) */
 	FALHA_INIBIDOR,
+	FALHA_AQUECEDOR,
 };
 
 struct EventoBafometro {
@@ -66,9 +68,17 @@ int bafometro_processarProximoEvento(k_timeout_t espera);
 /* Publicação de eventos; seguras em interrupção. Retornam o erro de k_msgq_put(). */
 int bafometro_publicarEvento(const struct EventoBafometro *evento);
 int bafometro_publicarComando(enum CodigoComando comando);
+
+/*
+ * A falha é registrada antes de ir para a fila: mesmo que o evento se perca por fila
+ * cheia (retorno diferente de 0), o próximo evento processado leva a máquina ao ERRO.
+ */
 int bafometro_publicarFalha(enum CodigoFalha falha);
 
 enum EstadoBafometro bafometro_estadoAtual(void);
+
+/* Causa do último ERRO; FALHA_NENHUMA depois de uma inicialização sem falha. */
+enum CodigoFalha bafometro_codigoErro(void);
 const char *bafometro_nomeEstado(enum EstadoBafometro estado);
 
 /* Diagnóstico: eventos perdidos por fila cheia e de tempo descartados por geração. */

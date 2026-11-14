@@ -7,6 +7,10 @@
  *   incrementa a geração, descartando eventos de tempo antigos;
  * - callbacks (temporizador e GPIO) apenas publicam o evento na fila;
  * - smf_set_state() só em ações de entrada ou execução, como última instrução.
+ *
+ * Falhas (ADR 0002): falha de dispositivo e medição inválida levam ao ERRO, que
+ * ativa o inibidor; uma falha publicada é registrada antes da fila e tem prioridade
+ * sobre o próximo evento, mesmo que o seu evento se perca.
  */
 
 #include <zephyr/kernel.h>
@@ -71,6 +75,9 @@ static struct ContextoBafometro contexto;
 static atomic_t eventosPerdidos;
 static atomic_t eventosDescartados;
 
+/* Primeira falha publicada e ainda não tratada; independe da entrega pela fila. */
+static atomic_t falhaPendente;
+
 /* Geração e finalidade da armação corrente, lidas pelo callback do temporizador. */
 static uint16_t geracaoArmada;
 static uint8_t finalidadeArmada;
@@ -123,6 +130,7 @@ int bafometro_publicarFalha(enum CodigoFalha falha)
 		.codigo = (uint8_t)falha,
 	};
 
+	(void)atomic_cas(&falhaPendente, FALHA_NENHUMA, (atomic_val_t)falha);
 	return bafometro_publicarEvento(&evento);
 }
 
@@ -246,7 +254,11 @@ static void entrarPreAquecendo(void *obj)
 	struct ContextoBafometro *ctx = obj;
 
 	anunciarEstado(ESTADO_PRE_AQUECENDO);
-	sensor_alcool_definirFase(FASE_AQUECIMENTO);
+	if (sensor_alcool_definirFase(FASE_AQUECIMENTO) != 0) {
+		ctx->codigoErro = FALHA_AQUECEDOR;
+		transitarPara(ESTADO_ERRO);
+		return;
+	}
 	ctx->acomodando = false;
 	ctx->tiquesRestantes = QTD_TIQUES_PRE_AQUECIMENTO;
 	tela_mostrarContagem("Preparando sensor, aguarde", ctx->tiquesRestantes);
@@ -279,7 +291,11 @@ static enum smf_state_result executarPreAquecendo(void *obj)
 		}
 
 		/* Fim do aquecimento: fase de operação e espera da acomodação do sinal. */
-		sensor_alcool_definirFase(FASE_OPERACAO);
+		if (sensor_alcool_definirFase(FASE_OPERACAO) != 0) {
+			ctx->codigoErro = FALHA_AQUECEDOR;
+			transitarPara(ESTADO_ERRO);
+			return SMF_EVENT_HANDLED;
+		}
 		ctx->acomodando = true;
 		armarTemporizador(FINALIDADE_ACOMODACAO, TEMPO_ACOMODACAO_FASE_MS, 0U);
 		return SMF_EVENT_HANDLED;
@@ -416,7 +432,10 @@ static void entrarProcessando(void *obj)
 	ctx->resultado.sequencia = ctx->sequenciaMedicao;
 
 	if (!ctx->resultado.valido) {
-		/* Tensão média nos trilhos durante toda a coleta: falha do circuito. */
+		/*
+		 * Tensão média fora da faixa medida: sensor desconectado, frio ou em curto.
+		 * É falha técnica, não leitura rejeitada: o inibidor vai para ativo (ADR 0002).
+		 */
 		LOG_ERR("Medição inválida: tensão média %d mV", (int)ctx->resultado.tensaoMediaMv);
 		ctx->codigoErro = FALHA_SENSOR_ALCOOL;
 		transitarPara(ESTADO_ERRO);
@@ -446,16 +465,19 @@ static void entrarApresentandoResultado(void *obj)
 	struct ContextoBafometro *ctx = obj;
 
 	anunciarEstado(ESTADO_APRESENTANDO_RESULTADO);
-	tela_mostrarResultado(&ctx->resultado);
-	ble_notificarResultado(&ctx->resultado);
 
-	/* Atua conforme a decisão tomada em PROCESSANDO; a saída é mantida. */
-	if (ctx->resultado.inibir) {
-		inibidor_ativar();
-	} else {
-		inibidor_liberar();
+	/*
+	 * Atua conforme a decisão tomada em PROCESSANDO, antes de mostrar o resultado:
+	 * um comando que falha não pode aparecer na tela como teste concluído.
+	 */
+	if ((ctx->resultado.inibir ? inibidor_ativar() : inibidor_liberar()) != 0) {
+		ctx->codigoErro = FALHA_INIBIDOR;
+		transitarPara(ESTADO_ERRO);
+		return;
 	}
 
+	tela_mostrarResultado(&ctx->resultado);
+	ble_notificarResultado(&ctx->resultado);
 	armarTemporizador(FINALIDADE_APRESENTACAO, TEMPO_APRESENTACAO_MS, 0U);
 }
 
@@ -506,7 +528,11 @@ static void entrarEconomia(void *obj)
 
 	anunciarEstado(ESTADO_ECONOMIA);
 	pararTemporizador();
-	sensor_alcool_definirFase(FASE_REPOUSO);
+	if (sensor_alcool_definirFase(FASE_REPOUSO) != 0) {
+		ctx->codigoErro = FALHA_AQUECEDOR;
+		transitarPara(ESTADO_ERRO);
+		return;
+	}
 	tela_apagar();
 	ble_definirAnuncioLento(true);
 
@@ -599,8 +625,10 @@ static void entrarErro(void *obj)
 
 	anunciarEstado(ESTADO_ERRO);
 	pararTemporizador();
-	inibidor_ativar();
-	sensor_alcool_definirFase(FASE_REPOUSO);
+
+	/* Já em ERRO não há para onde ir: os módulos registram as próprias falhas. */
+	(void)inibidor_ativar();
+	(void)sensor_alcool_definirFase(FASE_REPOUSO);
 	LOG_ERR("Falha %d", ctx->codigoErro);
 	tela_mostrarMensagem("Erro: reinicie o aparelho");
 }
@@ -647,6 +675,7 @@ int bafometro_iniciar(void)
 	k_msgq_purge(&filaEventos);
 	atomic_clear(&eventosPerdidos);
 	atomic_clear(&eventosDescartados);
+	atomic_clear(&falhaPendente);
 	contexto = (struct ContextoBafometro){0};
 
 	smf_set_initial(SMF_CTX(&contexto), &estados[ESTADO_INICIALIZANDO]);
@@ -656,10 +685,25 @@ int bafometro_iniciar(void)
 int bafometro_processarProximoEvento(k_timeout_t espera)
 {
 	struct EventoBafometro evento;
+	atomic_val_t falha;
 	int erro = k_msgq_get(&filaEventos, &evento, espera);
 
 	if (erro != 0) {
 		return erro;
+	}
+
+	/*
+	 * Falha registrada tem prioridade sobre o evento recebido, inclusive quando o
+	 * próprio evento de falha se perdeu por fila cheia. Em ERRO, ela já foi tratada.
+	 */
+	falha = atomic_get(&falhaPendente);
+	if (bafometro_estadoAtual() == ESTADO_ERRO) {
+		atomic_clear(&falhaPendente);
+	} else if (falha != FALHA_NENHUMA) {
+		evento = (struct EventoBafometro){
+			.tipo = EVENTO_FALHA,
+			.codigo = (uint8_t)falha,
+		};
 	}
 
 	if ((evento.tipo == EVENTO_TEMPO) && (evento.geracao != contexto.geracaoAtual)) {
@@ -683,6 +727,11 @@ enum EstadoBafometro bafometro_estadoAtual(void)
 	}
 
 	return (enum EstadoBafometro)(atual - &estados[0]);
+}
+
+enum CodigoFalha bafometro_codigoErro(void)
+{
+	return contexto.codigoErro;
 }
 
 const char *bafometro_nomeEstado(enum EstadoBafometro estado)

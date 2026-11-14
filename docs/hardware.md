@@ -11,7 +11,7 @@ Componentes, interfaces, conexões, pinagem e restrições físicas do bafômetr
 | Detector digital de sopro | Entrada digital com interrupção | Definido |
 | Display OLED 1,5" 128×128 (GME128128-01-I2C) | I²C | Controlador pendente |
 | Bluetooth LE | Rádio integrado (ESP32-C3) / coprocessador M0+ (STM32WB55) | Definido |
-| Saída de inibição | Saída digital mantida, *fail-active* | GPIO2 provisório (confirmar na bancada) |
+| Saída de inibição | Saída digital mantida, *fail-active* | GPIO2 provisório; circuito com estado seguro sem energia pendente |
 | Botões de energia lógica e de interface | Entradas digitais | Definido |
 
 ## Pendências
@@ -19,11 +19,32 @@ Componentes, interfaces, conexões, pinagem e restrições físicas do bafômetr
 1. **Controlador do display.** Confirmar no módulo físico (marcação ou datasheet do fornecedor) se é SH1107 ou SSD1327. Situação no Zephyr 4.4.0:
    - SSD1327: driver `solomon,ssd1327` (`CONFIG_SSD1327_5`). Aceita apenas `PIXEL_FORMAT_L_8` (1 byte por pixel, convertido internamente para 4 bits). O CFB trabalha com 1 bit por pixel e não serve a esse driver, então a tela exige renderização própria em L_8.
    - SH1107: não há binding. O mais próximo é `sinowealth,sh1106` (128×64, atendido pelo driver `display_ssd1306.c`); o uso com 128×128 não é suportado oficialmente e precisa de teste de bancada.
-2. **Pino da saída de inibição.** Ver "Orçamento de pinos esgotado" e a nota sobre a DevKitM-1.
+2. **Saída de inibição.** GPIO2 adotado provisoriamente na etapa 3 (ver "Orçamento de pinos esgotado" e a nota sobre a DevKitM-1). Falta o circuito de saída com estado seguro em reset, sem energia e com o MCU parado (ver "Saída de inibição: estado seguro").
 3. **Combinação de Q5 e Q7 no repouso do aquecedor.** O protótipo termina com os dois em nível alto; definir no esquemático.
-4. **Topologia do divisor do MQ303B.** O firmware adota o ADC sobre RL (VCC – Rs – ADC – RL – GND), como no datasheet e no texto do TCC, com `Rs = RL × (VCC − VRL) / VRL`. O protótipo usava a fórmula do ADC sobre o sensor, que inverte Rs/R0 nesse divisor. Conferir na bancada da etapa 3: em ar limpo e com vapor de álcool, a tensão no nó do ADC deve subir com o álcool. Se cair, o ADC está sobre o sensor e a fórmula precisa ser trocada.
+4. **Topologia do divisor do MQ303B (premissa, revista em 14/11/2026).** O firmware supõe RL do lado do terra (VCC – Rs – nó do ADC – RL – GND), com o ADC lendo VRL e `Rs = RL × (VCC − VRL) / VRL`. É premissa do projeto, não dado do datasheet:
+   - o manual define a saída como a tensão sobre RL ("changes of voltage on the load resistance"), que sobe com o álcool (V0 de 0,01 V a 0,45 V em ar limpo; VS de 1,0 V a 2,5 V em 125 ppm), mas o texto não diz de que lado RL fica;
+   - segundo o relatório RT-01/2026 (revisão 2.1), a Figura 2 do manual desenha RL do lado de Vc;
+   - o MQ303B tem 3 pinos: 1 e 3 são o aquecedor, e a tensão de teste vai entre o pino 2 e o pino 1 ou 3. O elemento sensor usa o eletrodo do aquecedor como retorno, então, com o aquecedor alimentado pelo lado alto e retorno no terra, o sensor fica do lado do terra e RL do lado de Vc. Nesse caso, o ADC no pino 2 lê a tensão sobre o sensor, que **cai** com o álcool, e a fórmula correta é a do protótipo, `Rs = RL × Vadc / (Vc − Vadc)`.
+
+   Conferir antes de qualquer ensaio com álcool, nesta ordem:
+   - **com a placa desligada:** localizar RL e testar continuidade entre o terminal de RL que não vai ao pino 2 e o GND (RL no terra) ou o 3V3 (RL em Vc); ou conferir no esquemático;
+   - **com o sensor aquecido, em ar limpo** (RL = 3,3 kΩ, VCC = 3,3 V, R0 entre 10 kΩ e 100 kΩ): abaixo de ~1 V no nó do ADC indica RL no terra (0,40 V para R0 = 24 kΩ); acima de ~2,4 V indica RL em Vc (2,90 V para 24 kΩ), acima da faixa de 2,5 V do ESP32-C3 a 11 dB;
+   - **com vapor de álcool:** a tensão sobe com RL no terra e cai com RL em Vc;
+   - conferir qual pino do aquecedor é o retorno da medição (o datasheet aceita o 1 ou o 3). O retorno é compartilhado com o aquecedor: a tensão dele e a corrente na trilha de terra (até ~0,6 A no pré-aquecimento) podem deslocar a leitura. Medir o nó do ADC em ar limpo nas duas fases do aquecedor e registrar a diferença.
+
+   É um ensaio de segurança, não só metrológico: com a fórmula do lado errado, o firmware inibe em ar limpo e **libera com álcool** (200 ppm seriam lidos abaixo da curva), e nenhuma guarda do firmware detecta o caso. Se RL estiver do lado de Vc, mudam juntos a fórmula de Rs, o lado da guarda de tensão (o sensor desconectado leva o nó a Vc, não a 0 V) e a escolha de RL, porque 3,3 kΩ deixa o ar limpo acima da faixa do ADC. A origem do R0 padrão de 24 kΩ do protótipo também não está registrada: ele é coerente com qualquer das duas topologias, conforme a fórmula que o produziu.
 5. **Faixa do ADC.** Com RL = 3,3 kΩ, VCC = 3,3 V e R0 = 24 kΩ (padrão do protótipo), a tensão sobre RL passa dos 2500 mV de fundo de escala a 11 dB a partir de cerca de 220 ppm (0,44 mg/L). Acima disso a leitura satura, ainda do lado de inibir. RL e R0 reais definem o ponto.
-6. **Datasheet do MQ303B (v1.4).** Confirmados: aquecimento de operação em 0,9 V ± 0,1 V; "Before the normal detection, sensor should be applied 2.0±0.2V high voltage for 5-10 seconds", origem dos 10 s de pré-aquecimento; R0 é a resistência em ar limpo; faixa de detecção de 20 a 500 ppm. Pendentes: corrente do aquecedor e o trecho da curva entre 20 e 50 ppm.
+6. **Datasheet do MQ303B (v1.4).** Confirmados:
+   - aquecimento de operação em 0,9 V ± 0,1 V;
+   - "Before the normal detection, sensor should be applied 2.0±0.2V high voltage for 5-10 seconds", origem dos 10 s de pré-aquecimento;
+   - R0 é a resistência em ar limpo;
+   - faixa de detecção de 20 a 500 ppm;
+   - 3 pinos: 1 e 3 são o aquecedor; a tensão de teste (3,0 V ± 0,1 V) vai entre o pino 2 e o pino 1 ou 3;
+   - no circuito de teste do datasheet (Vc = 3,0 V; RL ajustável, 4,7 kΩ na Figura 5), a saída em ar limpo (V0) fica entre 0,01 V e 0,45 V e, com 125 ppm (VS), entre 1,0 V e 2,5 V. Supondo RL = 4,7 kΩ, V0 corresponde a R0 de ~27 kΩ a ~1,4 MΩ: é inferência, não faixa garantida pelo fabricante;
+   - resistência do aquecedor de 4,0 Ω ± 0,5 Ω à temperatura ambiente e consumo de até 140 mW. Os números não fecham a frio: 0,9 V sobre 4,0 Ω dão ~0,2 W, e 140 mW a 0,9 V implicam ~5,8 Ω, ou seja, aquecedor quente. Medir a corrente nas duas fases;
+   - pré-aquecimento inicial (sensor novo) não inferior a 48 h, antes de calibrar.
+
+   Pendentes: corrente do aquecedor medida e o trecho da curva entre 20 e 50 ppm. Com RL = 3,3 kΩ, o firmware só mede Rs até ~105 kΩ (guarda de 100 mV, [decisão 0002](arquitetura/decisoes/0002-classificacao-das-falhas.md)); um sensor com R0 acima de ~100 kΩ exige RL maior.
 7. **Checklist antes do esquemático.** Ver a seção do ESP32-C3.
 
 ---
@@ -70,7 +91,7 @@ O módulo expõe **15** GPIOs. A tabela acima usa 8 e a reserva protege 7. **Nã
 | Opção | Ganho | Custo |
 |---|---|---|
 | Liberar UART0 (GPIO20/21) | +2 pinos | Perde a rota alternativa de gravação; o USB Serial/JTAG assume tudo |
-| Usar GPIO2 | +1 pino | Requer pull-up no reset; com driver ativo-alto, o estado de boot coincide com "inibindo", coerente com `fail-active` |
+| Usar GPIO2 | +1 pino | Requer pull-up no reset. O nível alto do reset precisa corresponder a "inibindo" e ao atuador sem energia (ver "Saída de inibição: estado seguro"). **Adotado provisoriamente na etapa 3.** |
 | Expansor I²C | +N pinos | Função de segurança passa a depender da integridade do barramento — desaconselhado |
 | Trocar de módulo | +N pinos | Refaz a fundamentação de hardware |
 
@@ -81,6 +102,16 @@ O módulo expõe **15** GPIOs. A tabela acima usa 8 e a reserva protege 7. **Nã
 - o log da ROM na partida vem habilitado de fábrica (eFuse `UART_PRINT_CONTROL` = 0) e sai pela UART0, então o GPIO21 alterna durante o boot — inadequado para uma saída *fail-active*.
 
 Na DevKitM-1, liberar a UART0 exige mover o console para o USB Serial/JTAG, com a modificação da placa, e a opção GPIO2 ganha peso. Decidir conforme a placa em que o protótipo será montado e conferir no esquemático da DevKitM-1 como o conversor se liga a GPIO20/21.
+
+### Saída de inibição: estado seguro (14/11/2026)
+
+O firmware deixa a saída ativa em INICIALIZANDO e em ERRO e trata as falhas de escrita ([decisão 0002](arquitetura/decisoes/0002-classificacao-das-falhas.md)). Ele não cobre o reset, a perda de alimentação nem o MCU parado; quem cobre esses casos é o circuito.
+
+- **Regra:** inibir = atuador **sem energia**. Com relé, usar o contato normalmente aberto em série com o sinal de partida, para que a liberação exija a bobina energizada por comando ativo do firmware.
+- **Com o GPIO2:** o pull-up do reset deixa o pino em nível alto, então o nível alto deve desligar o atuador, o que pede um estágio inversor. Um exemplo, para bobina na tensão lógica, é um MOSFET canal P no lado alto com pull-up do gate na alimentação da bobina: GPIO2 alto desliga a bobina (inibindo) e GPIO2 baixo, comandado pelo firmware, a liga (liberado). Nesse arranjo, o `GPIO_ACTIVE_HIGH` do overlay continua correto e o reset, a falta de energia e o MCU sem alimentação resultam em inibição.
+- **Arranjo a evitar:** nível alto energizando o atuador para inibir. Ele inibe no reset, mas libera quando a energia cai, e o aparelho passaria a ser contornável desligando a alimentação.
+- **MCU travado com a saída liberada:** fica liberado, como depois de um teste aprovado. O watchdog (opcional na arquitetura) reiniciaria em INICIALIZANDO, inibindo.
+- **Validação:** primeiro com carga simulada (LED ou relé de bancada), medindo a saída no reset, sem alimentação e em ERRO; nunca no sistema de partida de um veículo.
 
 ### Restrições assumidas
 
@@ -188,7 +219,7 @@ O driver do Zephyr instancia e aplica o esquema de calibração de fábrica do E
 | `V_IH` / `V_IL` | ≥ 0,75·VDD / ≤ 0,25·VDD |
 | Pull-up/pull-down internos | ~45 kΩ típico |
 
-Somar display, condicionamento analógico, aquecedor e inibidor ao orçamento — os 0,5 A não os incluem.
+Somar display, condicionamento analógico, aquecedor e inibidor ao orçamento — os 0,5 A não os incluem. Estimativa do aquecedor pelo datasheet, a medir: cerca de 0,5 A (1,0 W) no início dos 10 s a 2,0 V, até ~0,63 A no pior caso (2,2 V sobre 3,5 Ω a frio), caindo à medida que aquece; na operação, ~0,16 A (140 mW) com o aquecedor quente, ou até ~0,23 A (~0,2 W) se a resistência a quente não subir.
 
 **Pino EN:** alto habilita, baixo desliga, nunca flutuante. RC recomendado: **10 kΩ + 1 µF**. `t_STBL ≥ 50 µs` (estabilização antes de EN subir), `t_RST ≥ 50 µs` (EN baixo para reset), `t_H ≥ 3 ms` (leitura dos strapping pins).
 
@@ -213,14 +244,24 @@ Duas rotas independentes preservadas: USB Serial/JTAG (GPIO18/19) e UART0 (GPIO2
 - [ ] Pull-ups do I²C dimensionados; verificar se o módulo do display já os traz
 - [ ] Confirmar tensão de operação e endereço I²C do display
 - [ ] Estado seguro externo (pull-up/pull-down) nas entradas dos drivers do aquecedor
-- [ ] Polaridade ativa de `HEAT_2V_EN` e `HEAT_0V9_EN` derivada do esquemático, não presumida
-- [ ] Intertravamento *break-before-make* entre as duas fases de aquecimento
+- [ ] Níveis de `HEAT_2V_EN` e `HEAT_0V9_EN` por fase já fixados em RF02 e RF05 (Q5 alto e Q7 baixo no aquecimento; Q7 alto e Q5 baixo na operação); conferir no esquemático que eles produzem 2,0 V ± 0,2 V e 0,9 V ± 0,1 V no aquecedor
+- [ ] Intertravamento *break-before-make* entre as duas fases de aquecimento também no hardware: o firmware desliga antes de ligar, mas um pino com a flag de polaridade errada no overlay faria os dois conduzirem juntos
+- [ ] Circuito da saída de inibição com estado seguro em reset e sem energia (ver "Saída de inibição: estado seguro")
 - [ ] Faixa de saída condicionada do MQ303B compatível com a atenuação escolhida
 - [ ] Níveis do detector de sopro compatíveis com `V_IL`/`V_IH`
 - [ ] Rede RC no pino EN
 - [ ] Zona de keepout da antena livre na placa-base
 - [ ] Part number completo na lista de materiais
 - [ ] Ensaio de ruído no ADC: rádio off, BLE ativo, Wi-Fi ativo, aquecedor comutando
+
+### Alterações de 14/11/2026 (revisão da etapa 3)
+
+- GPIO2 registrado como pino provisório do inibidor e regra do estado seguro sem energia.
+- Critério quantitativo do ensaio da topologia e o risco de liberação com álcool se ela estiver errada.
+- Dados do datasheet do MQ303B: saída em ar limpo, resistência e consumo do aquecedor, pré-aquecimento inicial de 48 h.
+- Estimativa da corrente do aquecedor no orçamento de alimentação.
+- Checklist: níveis de Q5/Q7 vindos de RF02 e RF05 e intertravamento das fases também no hardware.
+- Revisão do mesmo dia (relatório RT-01/2026, versão final): a posição de RL deixou de ser atribuída ao datasheet e virou premissa a confirmar; entraram os 3 pinos do MQ303B, o retorno compartilhado com o aquecedor, o teste de continuidade com a placa desligada e a conta de potência do aquecedor a frio e a quente.
 
 ### Alterações em relação à versão de 25/07/2026
 
@@ -255,7 +296,7 @@ Pinagem do bafômetro a definir na etapa 8 do [plano de implementação](desenvo
 | [ESP32-C3-MINI-1 & MINI-1U Datasheet v2.2](https://www.espressif.com/documentation/esp32-c3-mini-1_datasheet_en.pdf) | Pinagem, boot, alimentação, dimensões, esquemáticos |
 | [ESP32-C3 Series Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_en.pdf) | ISA RV32IMC, arquitetura, periféricos |
 | [ESP32-C3 Hardware Design Guidelines](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32c3/) | Faixas do ADC por atenuação, layout |
-| [Winsen MQ303B — manual v1.4](https://www.winsen-sensor.com/d/files/manual/mq303b.pdf) | Aquecimento, pré-ativação, definição de R0 e faixa de detecção |
+| [Winsen MQ303B — manual v1.4](https://www.winsen-sensor.com/d/files/manual/mq303b.pdf) | Aquecimento, pré-ativação, definição de R0, faixa de detecção, saída em ar limpo, aquecedor e pré-aquecimento inicial |
 | [ESP32-C3 Series SoC Errata](https://docs.espressif.com/projects/esp-chip-errata/en/latest/esp32c3/) | Restrição do SAR ADC2 |
 | [ESP32-C3 Technical Reference Manual](https://www.espressif.com/sites/default/files/documentation/esp32-c3_technical_reference_manual_en.pdf) | GPIO Matrix, IO MUX, registradores |
 | [ESP32-C3-DevKitM-1 — User Guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32c3/esp32-c3-devkitm-1/user_guide.html) | USB e conversor USB-UART da placa |

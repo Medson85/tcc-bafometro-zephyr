@@ -22,12 +22,23 @@ static const struct gpio_dt_spec pinoInibidor =
 
 static bool ativo = true;
 
-static void aplicar(void)
+static int aplicar(bool novoEstado)
 {
+	int erro = 0;
+
 #if TEM_PINO
-	(void)gpio_pin_set_dt(&pinoInibidor, ativo ? 1 : 0);
+	erro = gpio_pin_set_dt(&pinoInibidor, novoEstado ? 1 : 0);
 #endif
+	if (erro != 0) {
+		/* Sem confirmação da escrita, o estado lógico não pode afirmar a liberação. */
+		ativo = true;
+		LOG_ERR("Falha ao comandar o inibidor (%d)", erro);
+		return erro;
+	}
+
+	ativo = novoEstado;
 	LOG_INF("Inibidor %s", ativo ? "ATIVO" : "LIBERADO");
+	return 0;
 }
 
 int inibidor_iniciar(void)
@@ -42,20 +53,17 @@ int inibidor_iniciar(void)
 #else
 	LOG_WRN("Placa sem pino do inibidor no devicetree: estado só em LOG");
 #endif
-	aplicar();
-	return 0;
+	return aplicar(true);
 }
 
-void inibidor_ativar(void)
+int inibidor_ativar(void)
 {
-	ativo = true;
-	aplicar();
+	return aplicar(true);
 }
 
-void inibidor_liberar(void)
+int inibidor_liberar(void)
 {
-	ativo = false;
-	aplicar();
+	return aplicar(false);
 }
 
 bool inibidor_estaAtivo(void)

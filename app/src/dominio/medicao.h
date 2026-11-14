@@ -22,7 +22,7 @@
  * Aplica o filtro a todas as amostras e calcula o resultado sobre as saídas a partir
  * de MEDICAO_INICIO_TRECHO_ESTAVEL. Zera o resultado antes de preencher.
  * Retorna resultado->valido: false se faltarem amostras, se a tensão média estiver
- * fora dos trilhos ou se o R0 for inválido.
+ * fora da faixa medida (sensor desconectado, frio ou em curto) ou se o R0 for inválido.
  */
 bool medicao_calcular(const int32_t *amostrasMv, uint16_t quantidade, float r0Ohms,
 		      struct ResultadoMedicao *resultado);

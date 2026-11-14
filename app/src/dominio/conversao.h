@@ -18,7 +18,8 @@ enum FaixaCurva {
 
 /*
  * Rs = RL * (VCC - VRL) / VRL, para o divisor VCC - Rs - ADC - RL - GND.
- * Retorna false se a tensão estiver a menos de MARGEM_TENSAO_VALIDA_MV dos trilhos.
+ * Retorna false fora da faixa medida: abaixo de TENSAO_MINIMA_VALIDA_MV (sensor
+ * desconectado ou frio) ou a menos de MARGEM_TENSAO_VALIDA_MV de VCC.
  */
 bool conversao_calcularRs(float tensaoRlMv, float *resistenciaRsOhms);
 

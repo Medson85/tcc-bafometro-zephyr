@@ -15,7 +15,12 @@ enum FaseAquecedor {
 };
 
 int sensor_alcool_iniciar(void);
-void sensor_alcool_definirFase(enum FaseAquecedor fase);
+
+/*
+ * Troca a fase desligando antes de ligar. Retorna 0 ou um erro negativo; em erro,
+ * tenta desligar as duas saídas, e a aplicação deve ir para ERRO.
+ */
+int sensor_alcool_definirFase(enum FaseAquecedor fase);
 
 /* Lê a tensão sobre RL em mV. Retorna 0 ou um erro negativo. */
 int sensor_alcool_lerTensaoMv(int32_t *tensaoMv);

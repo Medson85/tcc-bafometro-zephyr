@@ -22,11 +22,11 @@ static const struct PontoCurva curvaSensibilidade[] = {
 
 bool conversao_calcularRs(float tensaoRlMv, float *resistenciaRsOhms)
 {
-	const bool dentroDosTrilhos =
-		(tensaoRlMv > MARGEM_TENSAO_VALIDA_MV) &&
+	const bool dentroDaFaixaMedida =
+		(tensaoRlMv >= TENSAO_MINIMA_VALIDA_MV) &&
 		(tensaoRlMv < (TENSAO_ALIMENTACAO_MV - MARGEM_TENSAO_VALIDA_MV));
 
-	if ((resistenciaRsOhms == NULL) || !dentroDosTrilhos) {
+	if ((resistenciaRsOhms == NULL) || !dentroDaFaixaMedida) {
 		return false;
 	}
 

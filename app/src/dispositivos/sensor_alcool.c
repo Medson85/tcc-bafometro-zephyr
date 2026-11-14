@@ -76,29 +76,43 @@ int sensor_alcool_iniciar(void)
 	return 0;
 }
 
-void sensor_alcool_definirFase(enum FaseAquecedor fase)
+int sensor_alcool_definirFase(enum FaseAquecedor fase)
 {
 	const bool liga2V = (fase == FASE_AQUECIMENTO);
 	const bool liga0V9 = (fase == FASE_OPERACAO);
 
 #if TEM_AQUECEDOR
-	/* Desliga antes de ligar: as duas fases nunca conduzem juntas. */
+	int erro = 0;
+
+	/*
+	 * Desliga antes de ligar: as duas fases nunca conduzem juntas. Uma escrita que
+	 * falha interrompe a sequência antes de ligar qualquer saída.
+	 */
 	if (!liga2V) {
+		erro = gpio_pin_set_dt(&pinoAquecimento2V, 0);
+	}
+	if ((erro == 0) && !liga0V9) {
+		erro = gpio_pin_set_dt(&pinoAquecimento0V9, 0);
+	}
+	if ((erro == 0) && liga2V) {
+		erro = gpio_pin_set_dt(&pinoAquecimento2V, 1);
+	}
+	if ((erro == 0) && liga0V9) {
+		erro = gpio_pin_set_dt(&pinoAquecimento0V9, 1);
+	}
+
+	if (erro != 0) {
+		/* Estado físico incerto: tenta deixar o aquecedor sem energia. */
 		(void)gpio_pin_set_dt(&pinoAquecimento2V, 0);
-	}
-	if (!liga0V9) {
 		(void)gpio_pin_set_dt(&pinoAquecimento0V9, 0);
-	}
-	if (liga2V) {
-		(void)gpio_pin_set_dt(&pinoAquecimento2V, 1);
-	}
-	if (liga0V9) {
-		(void)gpio_pin_set_dt(&pinoAquecimento0V9, 1);
+		LOG_ERR("Falha ao trocar a fase do aquecedor (%d)", erro);
+		return erro;
 	}
 #endif
 
 	LOG_INF("Aquecedor: %s (Q5=%d, Q7=%d)",
 		liga2V ? "aquecimento" : (liga0V9 ? "operação" : "repouso"), liga2V, liga0V9);
+	return 0;
 }
 
 int sensor_alcool_lerTensaoMv(int32_t *tensaoMv)

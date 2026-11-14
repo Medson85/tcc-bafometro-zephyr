@@ -8,10 +8,13 @@
 
 #include <stdbool.h>
 
-/* Configura o pino já ativo. Retorna 0 ou um erro negativo. */
-int inibidor_iniciar(void);
-void inibidor_ativar(void);
-void inibidor_liberar(void);
+/*
+ * Configuram e comandam o pino. Retornam 0 ou um erro negativo. Em erro, o estado
+ * físico é desconhecido e o estado lógico fica ativo: a aplicação deve ir para ERRO.
+ */
+int inibidor_iniciar(void); /* configura o pino já ativo */
+int inibidor_ativar(void);
+int inibidor_liberar(void);
 bool inibidor_estaAtivo(void);
 
 #endif /* BAFOMETRO_INIBIDOR_H */

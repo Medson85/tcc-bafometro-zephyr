@@ -33,12 +33,23 @@
 #define QTD_MAXIMA_AMOSTRAS       110U  /* 5 s a 50 ms, com margem */
 
 /*
- * Circuito de medição do MQ303B: VCC - Rs (sensor) - nó do ADC - RL - GND.
- * O ADC mede a tensão sobre RL (VRL), como no datasheet e no texto do TCC.
+ * Circuito de medição do MQ303B. PREMISSA a confirmar na placa (docs/hardware.md):
+ * VCC - Rs (sensor) - nó do ADC - RL - GND, com o ADC lendo VRL, a tensão sobre RL.
+ * O datasheet define a saída como VRL, mas não fixa de que lado RL fica. Com RL do
+ * lado de VCC, o ADC leria a tensão sobre o sensor: mudariam a fórmula de Rs e o lado
+ * da guarda de tensão.
  */
-#define TENSAO_ALIMENTACAO_MV   3300.0f
-#define RESISTENCIA_CARGA_OHMS  3300.0f
-#define MARGEM_TENSAO_VALIDA_MV 1.0f /* protótipo: rejeita leituras a 1 mV dos trilhos */
+#define TENSAO_ALIMENTACAO_MV  3300.0f
+#define RESISTENCIA_CARGA_OHMS 3300.0f
+
+/*
+ * Guardas do divisor. Abaixo de TENSAO_MINIMA_VALIDA_MV a leitura está fora do que o
+ * circuito mede: sensor desconectado ou frio, ou Rs acima de ~105 kΩ com RL = 3,3 kΩ.
+ * O ADC do ESP32-C3 a 11 dB erra até ±35 mV, então leituras menores não distinguem
+ * sensor de circuito aberto. PROVISÓRIO: confirmar na bancada (ADR 0002).
+ */
+#define TENSAO_MINIMA_VALIDA_MV 100.0f
+#define MARGEM_TENSAO_VALIDA_MV 1.0f /* protótipo: rejeita leituras a 1 mV de VCC */
 
 /* Conversão: mg/L = ppm / 500 (protótipo; superestima de 6 a 9 % frente ao gás ideal) */
 #define FATOR_PPM_PARA_MGL 500.0f
@@ -53,6 +64,15 @@
 #define INTERVALO_CALIBRACAO_MS             100U
 #define PORCENTAGEM_MINIMA_AMOSTRAS_VALIDAS 50U    /* protótipo */
 #define R0_PADRAO_OHMS                      24000U /* valor do protótipo */
+
+/*
+ * Faixa de validade do R0 (RF13). PROVISÓRIO até a bancada (ADR 0002):
+ * - mínimo: rejeita calibração com álcool no ar; com 50 ppm (Rs/R0 = 0,18) o R0
+ *   do protótipo sairia 4,3 kΩ;
+ * - máximo: maior Rs que o circuito mede com a guarda de TENSAO_MINIMA_VALIDA_MV.
+ */
+#define FAIXA_R0_MIN_OHMS 10000U
+#define FAIXA_R0_MAX_OHMS 100000U
 
 /*
  * Inibição, em milésimos de mg/L. PROVISÓRIO: definir pelo método da banda de guarda.

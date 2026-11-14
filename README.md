@@ -63,6 +63,7 @@ Na raiz do repositório, dentro do workspace do Zephyr:
 | Simulação (Linux ou WSL 2) | `west build -p always -b native_sim app -d build/native_sim -t run` |
 | Testes da máquina (Linux ou WSL 2) | `west build -p always -b native_sim tests/maquina -d build/testes-maquina -t run` |
 | Testes do domínio (Linux ou WSL 2) | `west build -p always -b native_sim tests/dominio -d build/testes-dominio -t run` |
+| Testes de falhas (Linux ou WSL 2) | `west build -p always -b native_sim tests/falhas -d build/testes-falhas -t run` |
 
 ## Organização do projeto
 

@@ -87,6 +87,21 @@ ZTEST(medicao, test_tensao_fora_dos_trilhos_invalida)
 	zassert_false(medicao_calcular(amostras, QTD_AMOSTRAS, R0_OHMS, &resultado));
 }
 
+/* RF10: sem o sensor, o nó do ADC fica preso a RL; o ruído não pode virar ar limpo. */
+ZTEST(medicao, test_sensor_desconectado_invalida)
+{
+	montarSopro(5.0f, 5.0f);
+	zassert_false(medicao_calcular(amostras, QTD_AMOSTRAS, R0_OHMS, &resultado));
+	zassert_false(resultado.valido);
+
+	montarSopro(TENSAO_MINIMA_VALIDA_MV - 1.0f, TENSAO_MINIMA_VALIDA_MV - 1.0f);
+	zassert_false(medicao_calcular(amostras, QTD_AMOSTRAS, R0_OHMS, &resultado));
+
+	montarSopro(TENSAO_MINIMA_VALIDA_MV, TENSAO_MINIMA_VALIDA_MV);
+	zassert_true(medicao_calcular(amostras, QTD_AMOSTRAS, R0_OHMS, &resultado));
+	zassert_true(resultado.valido);
+}
+
 ZTEST(medicao, test_r0_invalido_invalida)
 {
 	montarSopro(1000.0f, 1000.0f);

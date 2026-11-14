@@ -24,7 +24,7 @@ ZTEST_SUITE(conversao, NULL, NULL, NULL, NULL, NULL);
 
 ZTEST(conversao, test_rs_reconstroi_a_resistencia_do_divisor)
 {
-	const float resistencias[] = {500.0f, 1000.0f, 3300.0f, 24000.0f, 100000.0f, 400000.0f};
+	const float resistencias[] = {500.0f, 1000.0f, 3300.0f, 24000.0f, 100000.0f};
 
 	for (size_t i = 0U; i < ARRAY_SIZE(resistencias); i++) {
 		float resistenciaRsOhms;
@@ -56,13 +56,27 @@ ZTEST(conversao, test_mais_alcool_eleva_a_tensao_e_a_concentracao)
 	zassert_equal(faixa, FAIXA_DENTRO);
 }
 
-ZTEST(conversao, test_rs_rejeita_tensoes_nos_trilhos)
+/* Sensor desconectado ou frio: Rs alto demais para o circuito, que a guarda rejeita. */
+ZTEST(conversao, test_rs_acima_da_faixa_medida_e_rejeitado)
+{
+	const float resistencias[] = {400000.0f, 1000000.0f, 10000000.0f};
+	float resistenciaRsOhms;
+
+	for (size_t i = 0U; i < ARRAY_SIZE(resistencias); i++) {
+		zassert_false(
+			conversao_calcularRs(tensaoSobreRlMv(resistencias[i]), &resistenciaRsOhms),
+			"Rs de %d ohms", (int)resistencias[i]);
+	}
+}
+
+ZTEST(conversao, test_rs_rejeita_tensoes_fora_da_faixa_medida)
 {
 	float resistenciaRsOhms;
 
 	zassert_false(conversao_calcularRs(0.0f, &resistenciaRsOhms));
-	zassert_false(conversao_calcularRs(MARGEM_TENSAO_VALIDA_MV, &resistenciaRsOhms));
-	zassert_true(conversao_calcularRs(MARGEM_TENSAO_VALIDA_MV + 0.5f, &resistenciaRsOhms));
+	zassert_false(conversao_calcularRs(5.0f, &resistenciaRsOhms));
+	zassert_false(conversao_calcularRs(TENSAO_MINIMA_VALIDA_MV - 0.5f, &resistenciaRsOhms));
+	zassert_true(conversao_calcularRs(TENSAO_MINIMA_VALIDA_MV, &resistenciaRsOhms));
 	zassert_true(conversao_calcularRs(TENSAO_ALIMENTACAO_MV - MARGEM_TENSAO_VALIDA_MV - 0.5f,
 					  &resistenciaRsOhms));
 	zassert_false(conversao_calcularRs(TENSAO_ALIMENTACAO_MV - MARGEM_TENSAO_VALIDA_MV,

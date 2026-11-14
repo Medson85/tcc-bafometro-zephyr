@@ -49,7 +49,7 @@ Bafômetro com saída de inibição (interlock), executando a mesma aplicação 
 
 - ESP32-C3: o ADC2 é inutilizável (errata); a aquisição usa apenas o ADC1.
 - ESP32-C3: o driver ADC do Zephyr aceita apenas referência interna, 12 bits e tempo de aquisição padrão. Fora do modo DMA, não aceita amostragens extras nem leitura de vários canais na mesma sequência.
-- ESP32-C3: os 15 GPIOs do módulo estão comprometidos; a saída de inibição ainda não tem pino ([definições de hardware](hardware.md)).
+- ESP32-C3: os 15 GPIOs do módulo estão comprometidos; a saída de inibição usa o GPIO2 provisoriamente, com pull-up no reset e circuito de saída com estado seguro sem energia ([definições de hardware](hardware.md)).
 - STM32WB55: o BLE exige binário HCI no coprocessador M0+, gravado com sonda SWD externa.
 - O `native_sim` só executa em Linux; no Windows exige WSL 2 ou máquina virtual.
 - O pacote BLE de resultado deve caber nos 20 bytes úteis do MTU padrão (proposta).
@@ -72,6 +72,9 @@ Bafômetro com saída de inibição (interlock), executando a mesma aplicação 
 - critérios metrológicos de aceitação;
 - limite funcional de inibição e histerese, pelo método de banda de guarda proposto; com a curva atual, que começa em 0,100 mg/L, o limite menos a histerese precisa passar de 0,100 mg/L para haver liberação;
 - origem do tempo de 20 s de espera pelo sopro, a citar;
-- topologia do divisor do sensor, a confirmar no circuito (ver [definições de hardware](hardware.md));
+- topologia do divisor do sensor (RL do lado do terra, premissa do firmware, ou do lado de Vc), a confirmar na placa (ver [definições de hardware](hardware.md)); decide a fórmula de Rs e o lado da guarda de tensão, e com a topologia errada o firmware libera com álcool;
+- política de liberação sem R0 calibrado: o CA06 permite medir com o R0 padrão, e um R0 real diferente do padrão pode fazer um sopro acima do limite ser lido abaixo dele;
+- guarda mínima de tensão do divisor e faixa de validade do R0, provisórias em 100 mV e 10 kΩ a 100 kΩ ([decisão 0002](arquitetura/decisoes/0002-classificacao-das-falhas.md));
+- circuito da saída de inibição com estado seguro em reset e sem energia;
 - tempo mínimo entre testes;
 - tempo de acomodação após a troca de fase de Q5 e Q7.

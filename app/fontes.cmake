@@ -15,12 +15,22 @@ set(BAFOMETRO_FONTES_DOMINIO
   ${BAFOMETRO_DIR}/src/dominio/qualidade.c
 )
 
-set(BAFOMETRO_FONTES
-  ${BAFOMETRO_FONTES_DOMINIO}
+# Máquina de estados; os testes de falhas a ligam a dublês dos dispositivos.
+set(BAFOMETRO_FONTES_APLICACAO
   ${BAFOMETRO_DIR}/src/aplicacao/bafometro.c
+)
+
+# Dispositivos: única parte que conhece o devicetree.
+set(BAFOMETRO_FONTES_DISPOSITIVOS
   ${BAFOMETRO_DIR}/src/dispositivos/ble.c
   ${BAFOMETRO_DIR}/src/dispositivos/detector_sopro.c
   ${BAFOMETRO_DIR}/src/dispositivos/inibidor.c
   ${BAFOMETRO_DIR}/src/dispositivos/sensor_alcool.c
   ${BAFOMETRO_DIR}/src/dispositivos/tela.c
+)
+
+set(BAFOMETRO_FONTES
+  ${BAFOMETRO_FONTES_DOMINIO}
+  ${BAFOMETRO_FONTES_APLICACAO}
+  ${BAFOMETRO_FONTES_DISPOSITIVOS}
 )

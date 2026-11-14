@@ -106,6 +106,22 @@ static void medirSopro(void)
 	soprar(false);
 }
 
+/* Do resultado até o próximo aviso "Sopre", passando pela recuperação do sensor. */
+static void aguardarProximoTeste(void)
+{
+	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO,
+				  TEMPO_APRESENTACAO_MS + TEMPO_MIN_ENTRE_TESTES_MS + 100U));
+}
+
+/* Teste em ar limpo que libera o inibidor e deixa a máquina pronta para outro sopro. */
+static void liberarComArLimpo(void)
+{
+	medirSopro();
+	zassert_false(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 0);
+	aguardarProximoTeste();
+}
+
 ZTEST_SUITE(maquina, NULL, NULL, antesDeCadaTeste, NULL, NULL);
 
 ZTEST(maquina, test_inicia_com_inibidor_ativo_em_pre_aquecimento)
@@ -166,20 +182,76 @@ static int tensaoInstavel(const struct device *dev, unsigned int canal, void *da
 	return 0;
 }
 
-ZTEST(maquina, test_leitura_instavel_pede_novo_sopro_sem_mudar_o_inibidor)
+/*
+ * Sopro contínuo de 5 s com sinal instável, a partir do aviso "Sopre". A volta a
+ * AGUARDANDO_SOPRO só depois dos 5 s completos mostra que a leitura foi descartada
+ * pela qualidade, e não interrompida.
+ */
+static void soprarComSinalInstavel(void)
 {
 	static uint32_t leituras;
+	int64_t inicio;
 
-	chegarEmColetando();
 	leituras = 0U;
 	zassert_ok(adc_emul_value_func_set(canalSensor.dev, canalSensor.channel_id, tensaoInstavel,
 					   &leituras));
-	zassert_true(processarAte(ESTADO_PROCESSANDO, TEMPO_SOPRO_MINIMO_MS + 100U) ||
-		     (bafometro_estadoAtual() == ESTADO_AGUARDANDO_SOPRO));
-	processarPor(10U);
-	zassert_equal(bafometro_estadoAtual(), ESTADO_AGUARDANDO_SOPRO);
-	zassert_true(inibidor_estaAtivo());
+	soprar(true);
+	zassert_true(processarAte(ESTADO_COLETANDO, 10U));
+	inicio = k_uptime_get();
+	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	zassert_true((k_uptime_get() - inicio) >= (TEMPO_SOPRO_MINIMO_MS - 2));
 	soprar(false);
+}
+
+ZTEST(maquina, test_leitura_instavel_nao_libera_o_inibidor_ativo)
+{
+	chegarEmAguardandoSopro();
+	soprarComSinalInstavel();
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+}
+
+/* RF09 e ADR 0002: leitura rejeitada pela qualidade não muda o estado, nos dois sentidos. */
+ZTEST(maquina, test_leitura_instavel_mantem_o_inibidor_liberado)
+{
+	liberarComArLimpo();
+	soprarComSinalInstavel();
+	zassert_false(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 0);
+}
+
+/* RF10: sem o sensor, o nó do ADC fica preso a RL e só restam o offset e o ruído do ADC. */
+ZTEST(maquina, test_sensor_desconectado_leva_ao_erro_e_ativa_o_inibidor)
+{
+	liberarComArLimpo();
+	definirTensaoMv(5U);
+	soprar(true);
+	zassert_true(processarAte(ESTADO_ERRO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	soprar(false);
+	zassert_equal(bafometro_codigoErro(), FALHA_SENSOR_ALCOOL);
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+}
+
+/*
+ * RF13: calibrar com 50 ppm no ar (Rs/R0 = 0,18) daria um R0 de 18 % do real, e um sopro
+ * com álcool passaria a ser lido abaixo da curva. A faixa do R0 rejeita a calibração.
+ */
+ZTEST(maquina, test_calibracao_com_alcool_presente_e_rejeitada)
+{
+	liberarComArLimpo();
+	definirTensaoMv(tensaoParaRelacaoMv(0.18f));
+	zassert_ok(bafometro_publicarComando(COMANDO_CALIBRAR));
+	zassert_true(processarAte(ESTADO_CALIBRANDO_R0, 10U));
+	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO,
+				  QTD_AMOSTRAS_CALIBRACAO * INTERVALO_CALIBRACAO_MS + 100U));
+
+	definirTensaoMv(tensaoParaRelacaoMv(0.047f)); /* 200 ppm */
+	soprar(true);
+	zassert_true(processarAte(ESTADO_APRESENTANDO_RESULTADO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	soprar(false);
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
 }
 
 ZTEST(maquina, test_tensao_nos_trilhos_leva_ao_erro)
@@ -187,6 +259,7 @@ ZTEST(maquina, test_tensao_nos_trilhos_leva_ao_erro)
 	definirTensaoMv(0U);
 	chegarEmColetando();
 	zassert_true(processarAte(ESTADO_ERRO, TEMPO_SOPRO_MINIMO_MS + 100U));
+	zassert_equal(bafometro_codigoErro(), FALHA_SENSOR_ALCOOL);
 	zassert_true(inibidor_estaAtivo());
 	zassert_equal(pino(&pinoAquecimento2V), 0);
 	zassert_equal(pino(&pinoAquecimento0V9), 0);
@@ -298,6 +371,31 @@ ZTEST(maquina, test_fila_cheia_durante_a_coleta_invalida_a_medicao)
 
 	zassert_true(processarAte(ESTADO_AGUARDANDO_SOPRO, 3U * PERIODO_AMOSTRAGEM_MS));
 	soprar(false);
+}
+
+/* RF10: a falha não depende da fila; mesmo perdida por fila cheia, leva ao ERRO. */
+ZTEST(maquina, test_falha_com_fila_cheia_ainda_leva_ao_erro)
+{
+	medirSopro(); /* ar limpo: liberado, em APRESENTANDO_RESULTADO */
+	zassert_false(inibidor_estaAtivo());
+
+	for (int i = 0; i < QTD_POSICOES_FILA_EVENTOS; i++) {
+		zassert_ok(bafometro_publicarComando(COMANDO_INICIAR));
+	}
+	zassert_not_equal(bafometro_publicarFalha(FALHA_SENSOR_ALCOOL), 0,
+			  "a fila deveria estar cheia");
+
+	zassert_true(processarAte(ESTADO_ERRO, 10U));
+	zassert_equal(bafometro_codigoErro(), FALHA_SENSOR_ALCOOL);
+	zassert_true(inibidor_estaAtivo());
+	zassert_equal(pino(&pinoInibidor), 1);
+
+	/* Os comandos que lotaram a fila e o próprio evento de falha não reabrem o ciclo. */
+	processarPor(100U);
+	zassert_equal(bafometro_estadoAtual(), ESTADO_ERRO);
+	zassert_ok(bafometro_publicarComando(COMANDO_REINICIAR));
+	zassert_true(processarAte(ESTADO_PRE_AQUECENDO, 10U));
+	zassert_equal(bafometro_codigoErro(), FALHA_NENHUMA);
 }
 
 ZTEST(maquina, test_cancelar_na_espera_entra_em_economia)

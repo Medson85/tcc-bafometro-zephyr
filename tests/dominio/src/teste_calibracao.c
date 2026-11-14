@@ -59,6 +59,65 @@ ZTEST(calibracao, test_amostras_validas_insuficientes_rejeitam)
 	zassert_within(r0Ohms, -1.0f, 1e-6f, "R0 não pode ser alterado na falha");
 }
 
+static void adicionarComRs(float resistenciaRsOhms, uint32_t quantidade)
+{
+	for (uint32_t i = 0U; i < quantidade; i++) {
+		calibracao_adicionar(&calibracao, tensaoSobreRlMv(resistenciaRsOhms));
+	}
+}
+
+/* RF13: o R0 só vale dentro da faixa; junto às bordas (0,1 %) ele é aceito. */
+ZTEST(calibracao, test_r0_junto_as_bordas_da_faixa_e_aceito)
+{
+	const float r0MinimoOhms = (float)FAIXA_R0_MIN_OHMS * 1.001f;
+	const float r0MaximoOhms = (float)FAIXA_R0_MAX_OHMS * 0.999f;
+	float r0Ohms;
+
+	adicionarComRs(r0MinimoOhms, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_true(calibracao_concluir(&calibracao, &r0Ohms));
+	zassert_within(r0Ohms, r0MinimoOhms, r0MinimoOhms * 1e-4f);
+
+	calibracao_iniciar(&calibracao);
+	adicionarComRs(r0MaximoOhms, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_true(calibracao_concluir(&calibracao, &r0Ohms));
+	zassert_within(r0Ohms, r0MaximoOhms, r0MaximoOhms * 1e-4f);
+}
+
+/* Calibração com 50 ppm no ar (Rs/R0 = 0,18): o R0 sairia 4,3 kΩ e é rejeitado. */
+ZTEST(calibracao, test_r0_abaixo_da_faixa_rejeita)
+{
+	float r0Ohms = -1.0f;
+
+	adicionarComRs(R0_OHMS * 0.18f, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_equal(calibracao.validas, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_false(calibracao_concluir(&calibracao, &r0Ohms));
+	zassert_within(r0Ohms, -1.0f, 1e-6f, "R0 não pode ser alterado na falha");
+}
+
+ZTEST(calibracao, test_r0_acima_da_faixa_rejeita)
+{
+	float r0Ohms = -1.0f;
+
+	/* 103 kΩ ainda passa pela guarda de tensão, mas fica acima da faixa. */
+	adicionarComRs(103000.0f, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_equal(calibracao.validas, QTD_AMOSTRAS_CALIBRACAO);
+	zassert_false(calibracao_concluir(&calibracao, &r0Ohms));
+	zassert_within(r0Ohms, -1.0f, 1e-6f);
+}
+
+/* Sensor desconectado: as amostras ficam abaixo da guarda e nenhuma é válida. */
+ZTEST(calibracao, test_sensor_desconectado_rejeita)
+{
+	float r0Ohms = -1.0f;
+
+	for (uint32_t i = 0U; i < QTD_AMOSTRAS_CALIBRACAO; i++) {
+		calibracao_adicionar(&calibracao, 5.0f);
+	}
+	zassert_equal(calibracao.validas, 0U);
+	zassert_false(calibracao_concluir(&calibracao, &r0Ohms));
+	zassert_within(r0Ohms, -1.0f, 1e-6f);
+}
+
 ZTEST(calibracao, test_sem_amostras_rejeita)
 {
 	float r0Ohms;

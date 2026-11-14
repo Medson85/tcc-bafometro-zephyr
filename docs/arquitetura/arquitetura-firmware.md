@@ -66,8 +66,9 @@ app/
     simulacao/
       roteiro.c               só no native_sim: percorre o fluxo completo
 tests/
-  maquina/                    máquina de estados (etapa 1)
+  maquina/                    máquina de estados (etapa 1), com ADC e GPIO emulados (etapa 3)
   dominio/                    lógica de cálculo (etapa 2)
+  falhas/                     máquina real com dublês dos dispositivos: falhas injetadas
 ```
 
 Na etapa 1, os módulos de dispositivo só registram em LOG, exceto o detector de sopro, que já usa o GPIO do devicetree. As interfaces deles já são as definitivas; as etapas seguintes preenchem a implementação sem mudar a máquina de estados.
@@ -75,6 +76,8 @@ Na etapa 1, os módulos de dispositivo só registram em LOG, exceto o detector d
 Na etapa 2, a lógica de cálculo foi portada para `dominio/`. A máquina já usa a decisão de inibição; o cálculo da medição entra nela na etapa 3, quando o ADC passa a fornecer as amostras.
 
 Na etapa 3, `sensor_alcool` e `inibidor` passaram a usar o devicetree. Cada recurso é opcional por placa (`DT_NODE_HAS_PROP`): sem os pinos do aquecedor ou do inibidor, o módulo registra só em LOG; sem `io-channels`, a leitura retorna `-ENOTSUP` e a máquina vai para ERRO. A troca de fase do aquecedor desliga antes de ligar, para Q5 e Q7 nunca conduzirem juntos. Falha de leitura do ADC em COLETANDO ou CALIBRANDO_R0 leva ao ERRO; falha ao configurar o inibidor leva ao ERRO com `FALHA_INIBIDOR`.
+
+Na revisão de 14/11/2026 ([relatório RT-01/2026](../desenvolvimento/relatorios/RT-01-2026-retomada-etapa3.md)), as falhas passaram a seguir a [decisão 0002](decisoes/0002-classificacao-das-falhas.md): as funções que comandam saídas retornam erro e a máquina vai para ERRO (`FALHA_INIBIDOR` ou `FALHA_AQUECEDOR`); a falha publicada deixou de depender da fila; leituras abaixo de `TENSAO_MINIMA_VALIDA_MV` (sensor desconectado ou frio) são falha técnica; e o R0 calibrado só é aceito dentro da faixa.
 
 Os pinos ficam no nó `zephyr,user` do devicetree (ver [definições de hardware](../hardware.md)). Um binding próprio só entra se a interface virar componente reutilizável.
 
@@ -90,14 +93,14 @@ Regras do SMF, conferidas no `include/zephyr/smf.h` da 4.4.0:
 | Estado | Na entrada | Eventos e transições |
 |---|---|---|
 | INICIALIZANDO | Inibidor **ativo**; valida dispositivos; carrega R0 persistido (ou padrão + flag `naoCalibrado`) | ok → PRE_AQUECENDO · falha → ERRO |
-| PRE_AQUECENDO | Fase de aquecimento (Q7=0, Q5=1); contagem de 10 s na tela (tique de 1 s); ao fim, fase de operação (Q7=1, Q5=0) e espera da acomodação | fim da acomodação → AGUARDANDO_SOPRO, ou CALIBRANDO_R0 se houver calibração pendente · calibrar → agenda a calibração |
+| PRE_AQUECENDO | Fase de aquecimento (Q7=0, Q5=1); contagem de 10 s na tela (tique de 1 s); ao fim, fase de operação (Q7=1, Q5=0) e espera da acomodação | fim da acomodação → AGUARDANDO_SOPRO, ou CALIBRANDO_R0 se houver calibração pendente · calibrar → agenda a calibração · falha na troca de fase → ERRO |
 | AGUARDANDO_SOPRO | Arma a interrupção do detector; temporizador de 20 s; tela "Sopre"; estado no BLE | sopro → COLETANDO · tempo → ECONOMIA · calibrar → CALIBRANDO_R0 · cancelar → ECONOMIA |
 | COLETANDO | Desarma a interrupção; zera coleta e filtro; temporizador periódico de 50 ms | Em cada tique: lê o ADC (mV), alimenta a média móvel e lê o detector. Queda acumulada acima da tolerância antes de 5 s → mensagem de repetição e AGUARDANDO_SOPRO · 5 s completos → PROCESSANDO · falha de ADC → ERRO |
-| PROCESSANDO | Para o temporizador; estatística do trecho estável (após o transiente de 2 s e a janela do filtro); Rs, Rs/R0, concentração, qualidade e decisão de inibição | válido → APRESENTANDO_RESULTADO · qualidade insuficiente → mensagem e AGUARDANDO_SOPRO · erro → ERRO |
-| APRESENTANDO_RESULTADO | Tela com mg/L e qualidade; notificação BLE; **atua o inibidor** conforme a decisão; temporizador de apresentação | tempo ou repetir → FINALIZANDO |
+| PROCESSANDO | Para o temporizador; estatística do trecho estável (após o transiente de 2 s e a janela do filtro); Rs, Rs/R0, concentração, qualidade e decisão de inibição | válido → APRESENTANDO_RESULTADO · qualidade insuficiente → mensagem e AGUARDANDO_SOPRO · tensão fora da faixa medida → ERRO |
+| APRESENTANDO_RESULTADO | **Atua o inibidor** conforme a decisão; só então tela com mg/L e qualidade, notificação BLE e temporizador de apresentação | tempo ou repetir → FINALIZANDO · falha ao comandar o inibidor → ERRO |
 | FINALIZANDO | Limpa dados transitórios; registra no histórico opcional; impõe o tempo mínimo entre testes | pronto → AGUARDANDO_SOPRO |
-| ECONOMIA | Fase de repouso (combinação pendente no esquemático); display apagado; anúncio BLE lento; detector armado como despertar | sopro ou comando → PRE_AQUECENDO |
-| CALIBRANDO_R0 | Só por comando, com sensor quente; 60 amostras a cada 100 ms; valida faixa; grava só após sucesso | fim → AGUARDANDO_SOPRO (sucesso, ou mantém o anterior com aviso) |
+| ECONOMIA | Fase de repouso (combinação pendente no esquemático); display apagado; anúncio BLE lento; detector armado como despertar | sopro ou comando → PRE_AQUECENDO · falha no repouso → ERRO |
+| CALIBRANDO_R0 | Só por comando, com sensor quente; 60 amostras a cada 100 ms; valida a faixa (`FAIXA_R0_MIN_OHMS` a `FAIXA_R0_MAX_OHMS`); grava só após sucesso | fim → AGUARDANDO_SOPRO (sucesso, ou mantém o anterior com aviso) · falha de leitura → ERRO |
 | ERRO | Inibidor **ativo**; aquecedor em repouso; código de erro na tela e no BLE | reiniciar → reinicialização |
 
 Proposta: o limite de 20 s de AGUARDANDO_SOPRO funciona também como gatilho de ociosidade; um único temporizador cumpre os dois papéis, e qualquer sopro ou comando o reinicia.
@@ -116,6 +119,7 @@ struct EventoBafometro {
 - A cada vez que o temporizador é armado, `geracaoAtual` é incrementada e o valor segue no evento; a máquina descarta `EVENTO_TEMPO` de geração diferente da atual.
 - Callbacks de temporizador e de GPIO apenas montam o evento e o inserem com `K_NO_WAIT`.
 - Inserção que falha incrementa um contador de perdas e gera `LOG_ERR`; perda de tique de amostragem invalida a medição em curso.
+- `bafometro_publicarFalha` registra a falha antes de enfileirar; a falha registrada substitui o próximo evento processado, mesmo que o próprio evento de falha tenha se perdido ([decisão 0002](decisoes/0002-classificacao-das-falhas.md)).
 - Laço principal: `k_msgq_get(..., K_FOREVER)`, validação da geração e `smf_run_state()`.
 
 ## Uso do kernel
@@ -135,7 +139,7 @@ Watchdog de hardware: opcional, coerente com o *fail-active*.
 
 ## Aquisição
 
-- Leitura síncrona por tique (`adc_read_dt`), conversão para mV, validação elétrica (guardas do divisor herdadas do protótipo) e entrada no filtro.
+- Leitura síncrona por tique (`adc_read_dt`), conversão para mV e entrada no filtro; a validação elétrica (guardas do divisor: `TENSAO_MINIMA_VALIDA_MV` no lado baixo e 1 mV de VCC no alto, [decisão 0002](decisoes/0002-classificacao-das-falhas.md)) é feita sobre a média do trecho estável na medição e amostra a amostra na calibração.
 - Sobreamostragem opcional (proposta): 4 leituras consecutivas mediadas por laço. No ESP32-C3 o driver não aceita `extra_samplings` fora do modo DMA.
 - A precisão do ADC é item de validação nos dois alvos: offset, ganho e repetibilidade contra fonte e multímetro de referência. No STM32WB55, o canal interno `vref` (alias `volt-sensor0` na placa WeAct) mede a referência real.
 
@@ -155,14 +159,14 @@ Pipeline em `dominio/medicao.c`, sobre as amostras brutas da coleta (em mV):
 1. **Filtro:** todas as amostras passam pela média móvel.
 2. **Trecho estável:** são descartadas as `QTD_AMOSTRAS_TRANSIENTE` iniciais (2 s) e as saídas do filtro cuja janela ainda contém amostras delas. Com coleta de 5 s a 50 ms e janela de 8, restam 53 amostras.
 3. **Estatística:** média, desvio padrão populacional e coeficiente de variação, sobre as saídas do filtro.
-4. **Rs:** a partir da tensão média sobre RL, `Rs = RL × (VCC − VRL) / VRL`, para o divisor VCC – Rs – ADC – RL – GND. Leituras a menos de 1 mV dos trilhos invalidam a medição.
+4. **Rs:** a partir da tensão média sobre RL, `Rs = RL × (VCC − VRL) / VRL`, para o divisor VCC – Rs – ADC – RL – GND (premissa a confirmar na placa; ver [definições de hardware](../hardware.md)). Tensão abaixo de `TENSAO_MINIMA_VALIDA_MV` (100 mV, provisório: sensor desconectado ou frio) ou a menos de 1 mV de VCC invalida a medição, que vai ao ERRO como falha técnica.
 5. **Concentração:** Rs/R0 pela curva do datasheet (10 pontos, de 50 a 500 ppm), com interpolação linear entre pontos. Fora da curva, o valor satura no extremo e a faixa é registrada (`FAIXA_ABAIXO` ou `FAIXA_ACIMA`); a tela mostra "<" ou ">". Razão inválida satura no máximo.
 6. **mg/L:** ppm / 500, guardado em milésimos de mg/L.
 7. **Qualidade:** pelo coeficiente de variação, com os limiares do protótipo.
 
 Correções em relação ao protótipo:
 
-- **Fórmula de Rs.** O protótipo (V1 e V1.1) calcula `Rs = RL × VRL / (VCC − VRL)`, que vale quando o ADC mede a tensão sobre o sensor. O datasheet, o texto do TCC (`VRL = VC × RL / (RL + RS)`) e o próprio comentário de `sensor.h` na V1.1 descrevem o ADC sobre RL. Nesse divisor, a fórmula do protótipo inverte Rs/R0: depois da calibração a razão fica ≥ 1 e a conversão satura sempre em 50 ppm; com o R0 padrão, o ar limpo daria 500 ppm. Pendente: confirmar a topologia no circuito (ver [definições de hardware](../hardware.md)).
+- **Fórmula de Rs (premissa, revista em 14/11/2026).** O protótipo (V1 e V1.1) calcula `Rs = RL × VRL / (VCC − VRL)`, que vale quando o ADC mede a tensão sobre o sensor. O firmware adota `Rs = RL × (VCC − VRL) / VRL`, que vale quando o ADC mede a tensão sobre RL, com RL do lado do terra. A escolha se apoiou no comentário de `sensor.h` da V1.1, que descreve o ADC sobre RL; o datasheet e o texto do TCC (`VRL = VC × RL / (RL + RS)`) usam VRL como saída, mas não mostram de que lado RL fica nem onde o ADC está ligado. O MQ303B tem 3 pinos, e o elemento sensor usa um eletrodo do aquecedor como retorno: com o aquecedor alimentado pelo lado alto e retorno no terra, o sensor fica do lado do terra e RL do lado de VCC, e nesse caso a fórmula do protótipo é a correta. Até a medição na placa, a fórmula é premissa; trocar de topologia muda juntos a fórmula, o lado da guarda de tensão e a escolha de RL (ver [definições de hardware](../hardware.md)).
 - **Interpolação da V1.1.** A tabela da V1.1 associa a menor razão de cada segmento à menor concentração, o que inverte a interpolação dentro dos segmentos (Rs/R0 = 0,047 dá 150 ppm em vez de 200). A V1 estava correta e foi a referência do porte.
 - **Razão inválida.** Na V1.1, uma razão NaN resultava em 0 ppm; agora satura em 500 ppm, do lado de inibir.
 - **Janela do filtro no trecho estável.** Sem o descarte da janela, as primeiras saídas do filtro ainda incluiriam amostras do transiente.
@@ -176,10 +180,18 @@ Notas metrológicas:
 ## Inibidor
 
 - Saída mantida, **ativa** em INICIALIZANDO e em ERRO.
-- Muda apenas por medição aceita (válida e com qualidade diferente de descartar): ativa se a concentração ≥ `LIMITE_INIBICAO_MILESIMOS_MGL`; libera somente se < `LIMITE_INIBICAO_MILESIMOS_MGL − HISTERESE_LIBERACAO_MILESIMOS_MGL`; entre os dois, mantém o estado.
-- Qualidade insuficiente ou medição inválida não liberam; ECONOMIA preserva o último estado.
-- A decisão é tomada em PROCESSANDO (`dominio/decisao.c`) e aplicada em APRESENTANDO_RESULTADO.
-- Módulo `inibidor.c` com `inibidor_iniciar` (configura o pino já ativo; retorna `-ENODEV` em falha), `inibidor_ativar`, `inibidor_liberar` e `inibidor_estaAtivo`.
+- Comportamento por classe de situação ([decisão 0002](decisoes/0002-classificacao-das-falhas.md)):
+
+| Classe | Situações | Inibidor |
+|---|---|---|
+| Falha técnica | Dispositivo que falha ao configurar ou comandar; leitura do ADC que falha; medição fora da faixa medida | ERRO: ativo |
+| Leitura rejeitada | Qualidade insuficiente | Mantém o estado |
+| Ausência de medição | Sopro interrompido, evento perdido na coleta, espera esgotada, cancelamento, economia | Mantém o estado |
+| Medição aceita | Válida e com qualidade diferente de descartar | Ativa se ≥ `LIMITE_INIBICAO_MILESIMOS_MGL`; libera se < `LIMITE_INIBICAO_MILESIMOS_MGL − HISTERESE_LIBERACAO_MILESIMOS_MGL`; entre os dois, mantém |
+
+- A decisão é tomada em PROCESSANDO (`dominio/decisao.c`) e aplicada em APRESENTANDO_RESULTADO, antes da tela.
+- Módulo `inibidor.c` com `inibidor_iniciar` (configura o pino já ativo; retorna `-ENODEV` em falha), `inibidor_ativar` e `inibidor_liberar` (retornam o erro da escrita; em erro, o estado lógico fica ativo) e `inibidor_estaAtivo`.
+- O firmware não cobre reset, perda de alimentação nem travamento: o estado seguro nesses casos depende do circuito ([definições de hardware](../hardware.md)).
 
 Consequências:
 
@@ -191,6 +203,8 @@ Consequências:
 - R0 persistido com o subsistema `settings` (backend NVS), com versão do registro e faixa de validade na leitura.
 - Ausente, corrompido ou fora de faixa: usa `R0_PADRAO_OHMS` e a flag `naoCalibrado`, visível na tela e no BLE.
 - Calibração apenas pelo comando `calibrar` (proposta), com sensor quente e ar limpo; gravação só após sucesso e validação de faixa. Nunca a cada boot.
+- A validação de faixa já vale na etapa 3, para o R0 mantido em RAM: fora de `FAIXA_R0_MIN_OHMS` a `FAIXA_R0_MAX_OHMS`, a calibração é rejeitada e o R0 anterior continua.
+- O datasheet pede pré-aquecimento inicial de pelo menos 48 h para um sensor novo; calibrar antes disso grava um R0 que ainda vai derivar.
 - As duas placas já definem a partição `storage`: 192 KB no layout padrão de 4 MB do ESP32-C3 e 8 KB na WeAct.
 - Deriva do R0 com temperatura e umidade: fora do escopo do TCC, registrada como limitação.
 
@@ -269,9 +283,10 @@ Recusados, com registro: Singleton formal, orientação a objetos em C, factory,
 | `QTD_AMOSTRAS_CALIBRACAO` / `INTERVALO_CALIBRACAO_MS` | 60 / 100 | protótipo |
 | `PORCENTAGEM_MINIMA_AMOSTRAS_VALIDAS` | 50 | protótipo |
 | `R0_PADRAO_OHMS` | 24 000 | protótipo |
-| `FAIXA_R0_MIN_OHMS` / `FAIXA_R0_MAX_OHMS` | a definir | pendente |
+| `FAIXA_R0_MIN_OHMS` / `FAIXA_R0_MAX_OHMS` | 10 000 / 100 000 | provisório ([decisão 0002](decisoes/0002-classificacao-das-falhas.md)) |
 | `RESISTENCIA_CARGA_OHMS` / `TENSAO_ALIMENTACAO_MV` | 3 300 / 3 300 | circuito |
-| `MARGEM_TENSAO_VALIDA_MV` | 1 | protótipo |
+| `TENSAO_MINIMA_VALIDA_MV` | 100 | provisório: abaixo disso, sensor desconectado ou frio |
+| `MARGEM_TENSAO_VALIDA_MV` | 1 | protótipo (lado de VCC) |
 | `FATOR_PPM_PARA_MGL` | 500 | protótipo; superestima de 6 a 9 % frente ao gás ideal |
 | `LIMITE_INIBICAO_MILESIMOS_MGL` / `HISTERESE_LIBERACAO_MILESIMOS_MGL` | 150 / 20 | provisório; método da banda de guarda |
 | `QUALIDADE_CV_*` | 2 / 5 / 10 % | revalidar (definidos com 5 amostras brutas; agora são 53 saídas do filtro) |
@@ -280,6 +295,7 @@ A curva Rs/R0 → concentração fica como tabela em `conversao.c`, sem constant
 
 ## Testes
 
-1. Domínio puro (`tests/dominio`, 36 casos em 7 suítes) com ztest no `native_sim`: filtro (janela parcial e cheia), estatística, Rs (reconstrução do divisor, direção física e guardas), pontos, interpolação, continuidade e extremos da curva, qualidade, calibração do R0, decisão de inibição com histerese e composição da medição.
-2. Máquina de estados (`tests/maquina`, 14 casos) com eventos injetados no tempo simulado do `native_sim`: sequência normal, duração do pré-aquecimento e da coleta, sopro interrompido aos 3 s, microqueda tolerada, fim da espera levando à economia, despertar, reinício da espera por comando, evento de geração antiga, fila cheia durante a coleta, cancelamento, falha levando ao erro, calibração na espera e a partir da economia, e sopro anterior ao aviso.
-3. Checklist de hardware por alvo: polaridades, fases Q5/Q7, ADC contra referência, display, BLE (pacote e comando), estado do inibidor no boot, em erro e em economia, e reinicialização.
+1. Domínio puro (`tests/dominio`, 42 casos em 7 suítes) com ztest no `native_sim`: filtro (janela parcial e cheia), estatística, Rs (reconstrução do divisor, direção física e guardas, inclusive sensor desconectado), pontos, interpolação, continuidade e extremos da curva, qualidade, calibração do R0 (com a faixa de validade), decisão de inibição com histerese e composição da medição.
+2. Máquina de estados (`tests/maquina`, 23 casos) com eventos injetados no tempo simulado do `native_sim`, ADC e GPIO emulados: sequência normal, duração do pré-aquecimento e da coleta, sopro interrompido aos 3 s, microqueda tolerada, fim da espera levando à economia, despertar, reinício da espera por comando, evento de geração antiga, fila cheia durante a coleta, cancelamento, falha levando ao erro, falha com a fila cheia, calibração na espera e a partir da economia, sopro anterior ao aviso, fases do aquecedor nos pinos, inibição com álcool, liberação em ar limpo, leitura instável nos dois estados do inibidor, tensão nos trilhos, sensor desconectado e calibração com álcool no ar.
+3. Falhas (`tests/falhas`, 12 casos): a máquina real ligada a dublês dos dispositivos, para injetar falhas que o GPIO e o ADC emulados não produzem: inicialização do inibidor, do detector e do sensor, troca de fase no aquecimento, na operação e no repouso, armação do detector, comando do inibidor nos dois sentidos, leitura do ADC na coleta e na calibração, e falha depois da liberação.
+4. Checklist de hardware por alvo: tensões do aquecedor por fase, ADC contra referência, display, BLE (pacote e comando), estado do inibidor no boot, em reset, sem alimentação (com carga simulada), em erro e em economia, e reinicialização.
